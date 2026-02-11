@@ -1,0 +1,43 @@
+<resources>
+    <string name="app_name">Lakbaylaya</string>
+
+    <!-- Navigation -->
+    <string name="nav_home">Home</string>
+    <string name="nav_map">Map</string>
+    <string name="nav_route">Route</string>
+    <string name="nav_profile">Profile</string>
+
+    <!-- Top Bar Actions -->
+    <string name="action_settings">Settings</string>
+    <string name="action_emergency">Emergency</string>
+    <string name="action_bluetooth">Bluetooth</string>
+    <string name="action_notifications">Notifications</string>
+
+    <!-- Accessibility Descriptions -->
+    <string name="content_desc_settings">Open settings</string>
+    <string name="content_desc_emergency">Trigger emergency alert</string>
+    <string name="content_desc_bluetooth_on">Bluetooth is on, tap to turn off</string>
+    <string name="content_desc_bluetooth_off">Bluetooth is off, tap to turn on</string>
+    <string name="content_desc_notifications">Open notifications</string>
+    <string name="content_desc_notification_badge">%1$d unread notifications</string>
+
+    <!-- Navigation Accessibility -->
+    <string name="nav_home_selected">Home screen, selected</string>
+    <string name="nav_home_not_selected">Home screen, not selected</string>
+    <string name="nav_map_selected">Map screen, selected</string>
+    <string name="nav_map_not_selected">Map screen, not selected</string>
+    <string name="nav_route_selected">Route screen, selected</string>
+    <string name="nav_route_not_selected">Route screen, not selected</string>
+    <string name="nav_profile_selected">Profile screen, selected</string>
+    <string name="nav_profile_not_selected">Profile screen, not selected</string>
+
+    <!-- Screen Titles -->
+    <string name="screen_title_home">Home</string>
+    <string name="screen_title_map">Map</string>
+    <string name="screen_title_route">Route</string>
+    <string name="screen_title_profile">Profile</string>
+
+    <!-- Notification Badge -->
+    <string name="notification_badge_over_99">99+</string>
+</resources>
+
