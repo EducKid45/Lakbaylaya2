@@ -4,6 +4,7 @@ plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.compose.compiler)
     alias(libs.plugins.kotlinx.serialization)
+    alias(libs.plugins.ksp.room)
 }
 
 // Read GEOAPIFY_API_KEY from root/local.properties or fallback to environment variable
@@ -83,6 +84,11 @@ dependencies {
     implementation(libs.accompanist.systemuicontroller)
     implementation(libs.androidx.appcompat)
     implementation(libs.material)
+
+    // Room (local database) - using KSP for annotation processing
+    implementation("androidx.room:room-runtime:2.8.4")
+    implementation("androidx.room:room-ktx:2.8.4")
+    ksp("androidx.room:room-compiler:2.8.4")
 
     // Annotation library (AndroidX) - provides @Nullable, @NonNull, @SuppressLint, etc.
     implementation("androidx.annotation:annotation:1.6.0")
