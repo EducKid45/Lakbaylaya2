@@ -20,7 +20,7 @@ import com.example.lakbaylaya.ui.navigationbars.nav.NavRoutes
 import com.example.lakbaylaya.ui.navigationbars.top.TopBar
 import com.example.lakbaylaya.ui.theme.LakbaylayaTheme
 import com.example.lakbaylaya.ui.navigationbars.viewmodel.AppViewModel
-import com.example.lakbaylaya.ui.screens.map.maplibre.MapLibreManager
+import com.example.lakbaylaya.maplibre.manager.MapLibreManager
 
 /**
  * MainActivity - Main entry point of the app
