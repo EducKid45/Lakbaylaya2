@@ -1,4 +1,4 @@
-package com.example.lakbaylaya.ui.screens.map.maplibre.config
+package com.example.lakbaylaya.maplibre.config
 
 import org.maplibre.android.camera.CameraPosition
 import org.maplibre.android.geometry.LatLng
@@ -7,7 +7,6 @@ import org.maplibre.android.geometry.LatLng
  * Configuration for MapLibre camera positions and settings
  *
  * Provides predefined camera positions for common locations and default settings.
- * Follows Single Responsibility Principle.
  */
 object MapCameraConfig {
 
@@ -15,25 +14,12 @@ object MapCameraConfig {
     const val DEFAULT_ZOOM = 12.0
     const val DEFAULT_TILT = 0.0
     const val DEFAULT_BEARING = 0.0
-
-    // Animation durations (milliseconds)
-    const val ANIMATION_DURATION_SHORT = 300
     const val ANIMATION_DURATION_MEDIUM = 600
-    const val ANIMATION_DURATION_LONG = 1000
-
-    // Zoom levels
-    const val ZOOM_COUNTRY = 5.0
-    const val ZOOM_CITY = 10.0
     const val ZOOM_STREET = 14.0
-    const val ZOOM_BUILDING = 16.0
-    const val ZOOM_MAX = 20.0
-    const val ZOOM_MIN = 0.0
 
-    /**
-     * Default camera position - Manila, Philippines
-     */
+    // Fast default camera position for the Philippines
     val DEFAULT_POSITION = CameraPosition.Builder()
-        .target(LatLng(14.5995, 120.9842)) // Manila City Hall
+        .target(LatLng(12.8797, 121.7740)) // Geographic center of Philippines
         .zoom(DEFAULT_ZOOM)
         .tilt(DEFAULT_TILT)
         .bearing(DEFAULT_BEARING)

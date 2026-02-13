@@ -1,13 +1,13 @@
-package com.example.lakbaylaya.ui.screens.map.components
+package com.example.lakbaylaya.maplibre
 
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.viewinterop.AndroidView
 import org.maplibre.android.maps.MapView
-import org.maplibre.android.maps.MapLibreMap
-import com.example.lakbaylaya.ui.screens.map.maplibre.MapLibreManager
-import com.example.lakbaylaya.ui.screens.map.maplibre.config.MapStyleConfig
+import com.example.lakbaylaya.maplibre.manager.MapLibreManager
+import com.example.lakbaylaya.maplibre.config.MapStyleConfig
+import org.maplibre.android.maps.Style
 
 /**
  * Compose wrapper for MapLibre native map view
@@ -40,7 +40,7 @@ fun MapLibreView(
 ) {
     val context = LocalContext.current
     val manager = remember { mapManager ?: MapLibreManager(context) }
-    var currentStyle by remember { mutableStateOf<org.maplibre.android.maps.Style?>(null) }
+    var currentStyle by remember { mutableStateOf<Style?>(null) }
 
     DisposableEffect(Unit) {
         onDispose {
