@@ -18,6 +18,7 @@ import androidx.compose.material.icons.filled.Bluetooth
 import androidx.compose.material.icons.filled.BluetoothDisabled
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
@@ -74,10 +75,12 @@ import com.example.lakbaylaya.ui.theme.Emergency
  * @param isBluetoothEnabled Current Bluetooth state
  * @param notificationCount Number of unread notifications
  * @param isDarkTheme Whether dark theme is active
- * @param onSettingsClick Callback for settings action
+ * @param onSettingsClick Callback for settings action (when showing settings icon)
+ * @param onBackClick Callback for back action (when showing back icon)
  * @param onEmergencyClick Callback for emergency action
  * @param onBluetoothClick Callback for bluetooth toggle
  * @param onNotificationsClick Callback for notifications action
+ * @param showBackIcon When true, shows a back arrow instead of settings icon
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -86,9 +89,11 @@ fun TopBar(
     notificationCount: Int,
     isDarkTheme: Boolean,
     onSettingsClick: () -> Unit,
+    onBackClick: () -> Unit,
     onEmergencyClick: () -> Unit,
     onBluetoothClick: () -> Unit,
-    onNotificationsClick: () -> Unit
+    onNotificationsClick: () -> Unit,
+    showBackIcon: Boolean = false
 ) {
     // Precompute string resources in composable scope to avoid using Context inside semantics
     val settingsDesc = stringResource(R.string.content_desc_settings)
@@ -97,6 +102,7 @@ fun TopBar(
     val bluetoothOnDesc = stringResource(R.string.content_desc_bluetooth_on)
     val bluetoothOffDesc = stringResource(R.string.content_desc_bluetooth_off)
     val badgeDesc = stringResource(R.string.content_desc_notification_badge, notificationCount)
+    val backDesc = stringResource(R.string.action_back)
 
     // Emergency pulse animation
     val infiniteTransition = rememberInfiniteTransition(label = "emergency_pulse")
@@ -143,20 +149,37 @@ fun TopBar(
                     }
                 },
                 navigationIcon = {
-                    // Settings - Left corner
-                    IconButton(
-                        onClick = onSettingsClick,
-                        modifier = Modifier
-                            .size(48.dp)
-                            .semantics {
-                                contentDescription = settingsDesc
-                            }
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Settings,
-                            contentDescription = stringResource(R.string.action_settings),
-                            tint = MaterialTheme.colorScheme.onSurface
-                        )
+                    if (showBackIcon) {
+                        IconButton(
+                            onClick = onBackClick,
+                            modifier = Modifier
+                                .size(48.dp)
+                                .semantics {
+                                    contentDescription = backDesc
+                                }
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.ArrowBack,
+                                contentDescription = backDesc,
+                                tint = MaterialTheme.colorScheme.onSurface
+                            )
+                        }
+                    } else {
+                        // Settings - Left corner
+                        IconButton(
+                            onClick = onSettingsClick,
+                            modifier = Modifier
+                                .size(48.dp)
+                                .semantics {
+                                    contentDescription = settingsDesc
+                                }
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Settings,
+                                contentDescription = stringResource(R.string.action_settings),
+                                tint = MaterialTheme.colorScheme.onSurface
+                            )
+                        }
                     }
                 },
                 actions = {

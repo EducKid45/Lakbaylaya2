@@ -16,6 +16,7 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.example.lakbaylaya.ui.navigationbars.bottom.BottomNavBar
 import com.example.lakbaylaya.ui.navigationbars.nav.NavGraph
+import com.example.lakbaylaya.ui.navigationbars.nav.NavRoutes
 import com.example.lakbaylaya.ui.navigationbars.top.TopBar
 import com.example.lakbaylaya.ui.theme.LakbaylayaTheme
 import com.example.lakbaylaya.ui.navigationbars.viewmodel.AppViewModel
@@ -109,10 +110,14 @@ fun MainApp(
                         isBluetoothEnabled = isBluetoothEnabled,
                         notificationCount = notificationCount,
                         isDarkTheme = isDarkTheme,
-                        onSettingsClick = { appViewModel.onSettingsClick() },
+                        // Navigate directly to Settings when settings is clicked
+                        onSettingsClick = { navController.navigate(NavRoutes.Settings.route) },
+                        onBackClick = { navController.popBackStack() },
                         onEmergencyClick = { appViewModel.onEmergencyClick() },
                         onBluetoothClick = { appViewModel.toggleBluetooth() },
-                        onNotificationsClick = { appViewModel.onNotificationsClick() }
+                        onNotificationsClick = { appViewModel.onNotificationsClick() },
+                        // Show back icon when we're on the Settings screen
+                        showBackIcon = (currentRoute == NavRoutes.Settings.route)
                     )
                 }
             }
@@ -144,7 +149,9 @@ fun MainApp(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(paddingValues),
-            onBottomNavVisibilityChange = { _ ->
+            // Forward visibility changes from Map screen to the Scaffold bottom bar
+            onBottomNavVisibilityChange = { visible ->
+                isBottomNavVisible = visible
             }
         )
     }
