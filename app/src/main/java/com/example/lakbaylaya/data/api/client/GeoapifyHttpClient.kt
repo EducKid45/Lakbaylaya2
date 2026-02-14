@@ -1,4 +1,4 @@
-package com.example.lakbaylaya.ui.screens.map.data.api.client
+package com.example.lakbaylaya.data.api.client
 
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext

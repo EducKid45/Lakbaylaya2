@@ -1,4 +1,4 @@
-package com.example.lakbaylaya.ui.screens.map.data.api.models
+package com.example.lakbaylaya.data.api.models
 
 /**
  * Response model for Geoapify Place Details API

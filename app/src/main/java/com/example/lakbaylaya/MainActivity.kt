@@ -21,6 +21,9 @@ import com.example.lakbaylaya.ui.navigationbars.top.TopBar
 import com.example.lakbaylaya.ui.theme.LakbaylayaTheme
 import com.example.lakbaylaya.ui.navigationbars.viewmodel.AppViewModel
 import com.example.lakbaylaya.maplibre.manager.MapLibreManager
+import com.example.lakbaylaya.ui.screens.onboarding.WelcomeOnboardingScreen
+import com.example.lakbaylaya.ui.screens.onboarding.ProfileSetupOnboardingScreen
+import androidx.core.content.edit
 
 /**
  * MainActivity - Main entry point of the app
@@ -58,6 +61,8 @@ import com.example.lakbaylaya.maplibre.manager.MapLibreManager
  * - Respects system reduce motion preference
  */
 class MainActivity : ComponentActivity() {
+    private enum class OnboardingState { NONE, WELCOME, PROFILE }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
@@ -67,23 +72,65 @@ class MainActivity : ComponentActivity() {
         // Enable edge-to-edge display
         enableEdgeToEdge()
 
+        // Get simple preferences to track whether onboarding was completed
+        val prefs = getSharedPreferences("app_prefs", MODE_PRIVATE)
+
         setContent {
             LakbaylayaTheme {
-                MainApp()
+                // Determine initial onboarding state from prefs
+                var onboardingState by remember {
+                    mutableStateOf(
+                        if (prefs.getBoolean(
+                                "onboarding_complete",
+                                false
+                            )
+                        ) OnboardingState.NONE else OnboardingState.WELCOME
+                    )
+                }
+
+                when (onboardingState) {
+                    OnboardingState.WELCOME -> {
+                        WelcomeOnboardingScreen(
+                            onSetUp = {
+                                // Move to profile setup step
+                                onboardingState = OnboardingState.PROFILE
+                            },
+                            onSkip = {
+                                // Mark onboarding complete and go to main app
+                                prefs.edit { putBoolean("onboarding_complete", true) }
+                                onboardingState = OnboardingState.NONE
+                            }
+                        )
+                    }
+
+                    OnboardingState.PROFILE -> {
+                        ProfileSetupOnboardingScreen(
+                            onFinish = {
+                                // Mark onboarding complete and show main app
+                                prefs.edit { putBoolean("onboarding_complete", true) }
+                                onboardingState = OnboardingState.NONE
+                            },
+                            onSetLocation = {
+                                // No-op for now in this wiring; location flow can be implemented later
+                            }
+                        )
+                    }
+
+                    OnboardingState.NONE -> {
+                        MainAppHost()
+                    }
+                }
             }
         }
     }
 }
 
-/**
- * Main app composable
- * Wires together all components with state management
- */
 @OptIn(ExperimentalAnimationApi::class)
 @Composable
-fun MainApp(
+private fun MainAppHost(
     appViewModel: AppViewModel = viewModel()
 ) {
+    // Moved MainApp body here to keep onboarding wiring clean
     // Navigation controller
     val navController = rememberNavController()
     val navBackStackEntry by navController.currentBackStackEntryAsState()

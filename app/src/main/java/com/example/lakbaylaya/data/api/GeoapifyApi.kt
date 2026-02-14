@@ -1,10 +1,10 @@
-package com.example.lakbaylaya.ui.screens.map.data.api
+package com.example.lakbaylaya.data.api
 
-import com.example.lakbaylaya.ui.screens.map.data.api.models.GeocodeResponse
-import com.example.lakbaylaya.ui.screens.map.data.api.models.PlaceDetailsResponse
-import com.example.lakbaylaya.ui.screens.map.data.api.models.PlacesResponse
-import com.example.lakbaylaya.ui.screens.map.data.api.models.ReverseGeocodeResponse
-import com.example.lakbaylaya.ui.screens.map.data.api.models.RoutingResponse
+import com.example.lakbaylaya.data.api.models.GeocodeResponse
+import com.example.lakbaylaya.data.api.models.PlaceDetailsResponse
+import com.example.lakbaylaya.data.api.models.PlacesResponse
+import com.example.lakbaylaya.data.api.models.ReverseGeocodeResponse
+import com.example.lakbaylaya.data.api.models.RoutingResponse
 
 /**
  * Interface defining Geoapify API endpoints

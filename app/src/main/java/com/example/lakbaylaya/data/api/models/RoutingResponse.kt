@@ -1,4 +1,4 @@
-package com.example.lakbaylaya.ui.screens.map.data.api.models
+package com.example.lakbaylaya.data.api.models
 
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable

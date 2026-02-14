@@ -1,18 +1,20 @@
-package com.example.lakbaylaya.ui.screens.map.data.repository
+package com.example.lakbaylaya.data.repository
 
-import com.example.lakbaylaya.ui.screens.map.data.api.GeoapifyApi
-import com.example.lakbaylaya.ui.screens.map.data.api.GeoapifyApiImpl
-import com.example.lakbaylaya.ui.screens.map.data.api.models.GeocodeResponse
-import com.example.lakbaylaya.ui.screens.map.data.api.models.ReverseGeocodeFeature
-import com.example.lakbaylaya.ui.screens.map.data.api.models.ReverseGeocodeProperties
-import com.example.lakbaylaya.ui.screens.map.data.api.models.RoutingResponse
+import com.example.lakbaylaya.data.api.GeoapifyApi
+import com.example.lakbaylaya.data.api.GeoapifyApiImpl
+import com.example.lakbaylaya.data.api.models.GeocodeResponse
+import com.example.lakbaylaya.data.api.models.ReverseGeocodeFeature
+import com.example.lakbaylaya.data.api.models.ReverseGeocodeProperties
+import com.example.lakbaylaya.data.api.models.RoutingResponse
 import com.example.lakbaylaya.ui.screens.map.models.DirectionStep
 import com.example.lakbaylaya.ui.screens.map.models.ManeuverType
 import com.example.lakbaylaya.ui.screens.map.models.ReverseGeocodedLocation
 import com.example.lakbaylaya.ui.screens.map.models.RouteOption
 import com.example.lakbaylaya.ui.screens.map.models.RoutePoint
 import com.example.lakbaylaya.ui.screens.map.models.SearchResult
-import com.example.lakbaylaya.ui.screens.map.utils.DistanceUtils
+import com.example.lakbaylaya.utils.DistanceUtils
+import java.util.Locale
+import kotlin.math.abs
 
 /**
  * Implementation of MapRepository using Geoapify API
@@ -179,7 +181,7 @@ class MapRepositoryImpl(
         userLon: Double
     ): ReverseGeocodedLocation {
         if (placeWithDistance == null) {
-            return ReverseGeocodedLocation.unknown()
+            return ReverseGeocodedLocation.Companion.unknown()
         }
 
         val props = placeWithDistance.feature.properties
@@ -209,7 +211,7 @@ class MapRepositoryImpl(
             },
             onFailure = {
                 // Complete fallback: return unknown location
-                Result.success(ReverseGeocodedLocation.unknown())
+                Result.success(ReverseGeocodedLocation.Companion.unknown())
             }
         )
     }
@@ -265,7 +267,13 @@ class MapRepositoryImpl(
             if (distance > 50000) {
                 return Result.failure(
                     IllegalArgumentException(
-                        "Walking route distance (${String.format(java.util.Locale.US, "%.1f", distance / 1000)} km) exceeds maximum limit of 50 km. " +
+                        "Walking route distance (${
+                            String.format(
+                                Locale.US,
+                                "%.1f",
+                                distance / 1000
+                            )
+                        } km) exceeds maximum limit of 50 km. " +
                         "Please choose a closer destination or add intermediate stops."
                     )
                 )
@@ -329,7 +337,13 @@ class MapRepositoryImpl(
 
                     return Result.failure(
                         IllegalArgumentException(
-                            "Walking segment $segmentName (${String.format(java.util.Locale.US, "%.1f", distance / 1000)} km) exceeds maximum limit of 50 km. " +
+                            "Walking segment $segmentName (${
+                                String.format(
+                                    Locale.US,
+                                    "%.1f",
+                                    distance / 1000
+                                )
+                            } km) exceeds maximum limit of 50 km. " +
                             "Please add intermediate stops or choose closer locations."
                         )
                     )
@@ -401,8 +415,8 @@ class MapRepositoryImpl(
 
     private fun areCoordinatesEqual(a: Pair<Double, Double>, b: Pair<Double, Double>): Boolean {
         // Dedup using small tolerance to account for floating point differences
-        val latEqual = kotlin.math.abs(a.first - b.first) < 1e-6
-        val lonEqual = kotlin.math.abs(a.second - b.second) < 1e-6
+        val latEqual = abs(a.first - b.first) < 1e-6
+        val lonEqual = abs(a.second - b.second) < 1e-6
         return latEqual && lonEqual
     }
 
@@ -418,7 +432,8 @@ class MapRepositoryImpl(
                         DirectionStep(
                             instruction = step.instruction.text,
                             distanceMeters = step.distance,
-                            durationMinutes = (step.time / 60).toInt().coerceAtLeast(1), // Convert seconds to minutes
+                            durationMinutes = (step.time / 60).toInt()
+                                .coerceAtLeast(1), // Convert seconds to minutes
                             maneuver = mapInstructionTypeToManeuver(step.instruction.type ?: 0),
                             latitude = step.location.getOrNull(1) ?: 0.0,
                             longitude = step.location.getOrNull(0) ?: 0.0
@@ -441,7 +456,8 @@ class MapRepositoryImpl(
                     else -> "Route ${('A' + index)}"
                 },
                 totalDistanceMeters = props.distance,
-                totalDurationMinutes = (props.time / 60).toInt().coerceAtLeast(1), // Convert seconds to minutes
+                totalDurationMinutes = (props.time / 60).toInt()
+                    .coerceAtLeast(1), // Convert seconds to minutes
                 steps = steps,
                 polylineCoordinates = polylineCoordinates,
                 isPrimary = index == 0 // First route is primary

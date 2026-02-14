@@ -1,20 +1,28 @@
-package com.example.lakbaylaya.ui.screens.map.data.api
+package com.example.lakbaylaya.data.api
 
 import android.util.Log
 import com.example.lakbaylaya.BuildConfig
-import com.example.lakbaylaya.ui.screens.map.data.api.client.GeoapifyHttpClient
-import com.example.lakbaylaya.ui.screens.map.data.api.models.GeocodeResponse
-import com.example.lakbaylaya.ui.screens.map.data.api.models.PlaceDetailsResponse
-import com.example.lakbaylaya.ui.screens.map.data.api.models.PlacesResponse
-import com.example.lakbaylaya.ui.screens.map.data.api.models.ReverseGeocodeFeature
-import com.example.lakbaylaya.ui.screens.map.data.api.models.ReverseGeocodeProperties
-import com.example.lakbaylaya.ui.screens.map.data.api.models.ReverseGeocodeResponse
-import com.example.lakbaylaya.ui.screens.map.data.api.models.RoutingResponse
+import com.example.lakbaylaya.data.api.client.GeoapifyHttpClient
+import com.example.lakbaylaya.data.api.models.GeocodeResponse
+import com.example.lakbaylaya.data.api.models.PlaceDetailsResponse
+import com.example.lakbaylaya.data.api.models.PlacesResponse
+import com.example.lakbaylaya.data.api.models.ReverseGeocodeFeature
+import com.example.lakbaylaya.data.api.models.ReverseGeocodeProperties
+import com.example.lakbaylaya.data.api.models.ReverseGeocodeResponse
+import com.example.lakbaylaya.data.api.models.RouteFeature
+import com.example.lakbaylaya.data.api.models.RouteGeometry
+import com.example.lakbaylaya.data.api.models.RouteLeg
+import com.example.lakbaylaya.data.api.models.RouteProperties
+import com.example.lakbaylaya.data.api.models.RouteStep
+import com.example.lakbaylaya.data.api.models.RoutingResponse
+import com.example.lakbaylaya.data.api.models.StepInstruction
 import com.google.gson.Gson
 import com.google.gson.JsonSyntaxException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import org.json.JSONArray
 import org.json.JSONObject
+import java.net.URLEncoder
 
 /**
  * Implementation of GeoapifyApi using HTTP client
@@ -324,7 +332,7 @@ class GeoapifyApiImpl(
                     // Waypoints must be sent as raw lon,lat|lon,lat per Geoapify docs — do not encode commas or pipes
                     value
                 } else {
-                    java.net.URLEncoder.encode(value, "UTF-8")
+                    URLEncoder.encode(value, "UTF-8")
                 }
             } catch (e: Exception) {
                 Log.w(TAG, "Failed to encode param value: $value", e)
@@ -516,7 +524,7 @@ class GeoapifyApiImpl(
         val routesArray = jsonObject.optJSONArray("routes")
         if (routesArray != null && routesArray.length() > 0) {
             // Build RoutingResponse from routes array
-            val featuresList = mutableListOf<com.example.lakbaylaya.ui.screens.map.data.api.models.RouteFeature>()
+            val featuresList = mutableListOf<RouteFeature>()
             for (i in 0 until routesArray.length()) {
                 try {
                     val routeObj = routesArray.getJSONObject(i)
@@ -531,10 +539,10 @@ class GeoapifyApiImpl(
                         val coordsArray = geometryObj.optJSONArray("coordinates")
                         if (coordsArray != null) {
                             // flatten possible nested arrays
-                            fun flatten(array: org.json.JSONArray) {
+                            fun flatten(array: JSONArray) {
                                 for (j in 0 until array.length()) {
                                     val item = array.get(j)
-                                    if (item is org.json.JSONArray) {
+                                    if (item is JSONArray) {
                                         if (item.length() >= 2 && item.opt(0) is Number && item.opt(1) is Number) {
                                             coords.add(listOf(item.getDouble(0), item.getDouble(1)))
                                         } else {
@@ -548,18 +556,18 @@ class GeoapifyApiImpl(
                     }
 
                     // Create minimal RouteFeature with parsed values
-                    val props = com.example.lakbaylaya.ui.screens.map.data.api.models.RouteProperties(
+                    val props = RouteProperties(
                         distance = distance,
                         time = time,
                         legs = emptyList()
                     )
-                    val geom = com.example.lakbaylaya.ui.screens.map.data.api.models.RouteGeometry(
+                    val geom = RouteGeometry(
                         type = geometryObj?.optString("type", "LineString") ?: "LineString",
                         coordinates = coords
                     )
 
                     featuresList.add(
-                        com.example.lakbaylaya.ui.screens.map.data.api.models.RouteFeature(
+                        RouteFeature(
                             type = "Feature",
                             properties = props,
                             geometry = geom
@@ -583,8 +591,8 @@ class GeoapifyApiImpl(
     }
 
     // Helper: parse GeoJSON features array into RoutingResponse
-    private fun parseFeaturesArray(originObject: JSONObject, features: org.json.JSONArray): RoutingResponse {
-        val featuresList = mutableListOf<com.example.lakbaylaya.ui.screens.map.data.api.models.RouteFeature>()
+    private fun parseFeaturesArray(originObject: JSONObject, features: JSONArray): RoutingResponse {
+        val featuresList = mutableListOf<RouteFeature>()
 
         for (i in 0 until features.length()) {
             try {
@@ -597,10 +605,10 @@ class GeoapifyApiImpl(
                 val coordinatesArray = geometry.getJSONArray("coordinates")
                 val coordinates = mutableListOf<List<Double>>()
 
-                fun flattenCoords(array: org.json.JSONArray) {
+                fun flattenCoords(array: JSONArray) {
                     for (idx in 0 until array.length()) {
                         val item = array.get(idx)
-                        if (item is org.json.JSONArray) {
+                        if (item is JSONArray) {
                             if (item.length() >= 2 && item.opt(0) is Number && item.opt(1) is Number) {
                                 coordinates.add(listOf(item.getDouble(0), item.getDouble(1)))
                             } else {
@@ -614,13 +622,13 @@ class GeoapifyApiImpl(
 
                 // Parse legs and steps
                 val legsArray = properties.optJSONArray("legs")
-                val legs = mutableListOf<com.example.lakbaylaya.ui.screens.map.data.api.models.RouteLeg>()
+                val legs = mutableListOf<RouteLeg>()
 
                 if (legsArray != null) {
                     for (k in 0 until legsArray.length()) {
                         val legObject = legsArray.getJSONObject(k)
                         val stepsArray = legObject.optJSONArray("steps")
-                        val steps = mutableListOf<com.example.lakbaylaya.ui.screens.map.data.api.models.RouteStep>()
+                        val steps = mutableListOf<RouteStep>()
 
                         if (stepsArray != null) {
                             for (l in 0 until stepsArray.length()) {
@@ -633,13 +641,13 @@ class GeoapifyApiImpl(
                                     emptyList()
                                 }
 
-                                val stepInstruction = com.example.lakbaylaya.ui.screens.map.data.api.models.StepInstruction(
+                                val stepInstruction = StepInstruction(
                                     text = instruction?.optString("text") ?: "",
                                     type = instruction?.optInt("type")
                                 )
 
                                 steps.add(
-                                    com.example.lakbaylaya.ui.screens.map.data.api.models.RouteStep(
+                                    RouteStep(
                                         distance = stepObject.optDouble("distance", 0.0),
                                         time = stepObject.optDouble("time", 0.0),
                                         instruction = stepInstruction,
@@ -652,7 +660,7 @@ class GeoapifyApiImpl(
                         }
 
                         legs.add(
-                            com.example.lakbaylaya.ui.screens.map.data.api.models.RouteLeg(
+                            RouteLeg(
                                 distance = legObject.optDouble("distance", 0.0),
                                 time = legObject.optDouble("time", 0.0),
                                 steps = steps
@@ -661,20 +669,20 @@ class GeoapifyApiImpl(
                     }
                 }
 
-                val routeProperties = com.example.lakbaylaya.ui.screens.map.data.api.models.RouteProperties(
+                val routeProperties = RouteProperties(
                     distance = properties.optDouble("distance", 0.0),
                     time = properties.optDouble("time", 0.0),
                     legs = legs,
                     mode = properties.optString("mode")
                 )
 
-                val routeGeometry = com.example.lakbaylaya.ui.screens.map.data.api.models.RouteGeometry(
+                val routeGeometry = RouteGeometry(
                     type = geomType,
                     coordinates = coordinates
                 )
 
                 featuresList.add(
-                    com.example.lakbaylaya.ui.screens.map.data.api.models.RouteFeature(
+                    RouteFeature(
                         type = feature.optString("type", "Feature"),
                         properties = routeProperties,
                         geometry = routeGeometry

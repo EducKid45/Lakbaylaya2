@@ -1,6 +1,5 @@
-package com.example.lakbaylaya.ui.screens.map.data.repository
+package com.example.lakbaylaya.data.repository
 
-import com.example.lakbaylaya.ui.screens.map.models.DirectionData
 import com.example.lakbaylaya.ui.screens.map.models.ReverseGeocodedLocation
 import com.example.lakbaylaya.ui.screens.map.models.RouteOption
 import com.example.lakbaylaya.ui.screens.map.models.RoutePoint
@@ -105,4 +104,3 @@ interface MapRepository {
         mode: String = "walk"
     ): Result<List<RouteOption>>
 }
-
