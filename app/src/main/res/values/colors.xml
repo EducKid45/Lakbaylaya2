@@ -7,4 +7,6 @@
     <color name="teal_700">#FF018786</color>
     <color name="black">#FF000000</color>
     <color name="white">#FFFFFFFF</color>
+    <!-- Background color used by the adaptive icons (mipmap-anydpi-v26/lakbaylaya*.xml) -->
+    <color name="lakbaylaya_background">#FFDFF7E1</color>
 </resources>
