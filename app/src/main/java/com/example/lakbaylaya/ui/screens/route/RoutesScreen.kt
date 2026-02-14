@@ -23,13 +23,16 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
-import androidx.lifecycle.viewmodel.compose.viewModel
 
+// Preview helper: lightweight ViewModel instance used only by @Preview
+private val previewRoutesViewModel = RoutesViewModel(null)
+
+/** Renders the Routes screen UI from the provided ViewModel. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Suppress("UNUSED_PARAMETER")
 @Composable
 fun RoutesScreen(
-    viewModel: RoutesViewModel = viewModel(),
+    viewModel: RoutesViewModel,
     onPreviewRoute: (SavedRoute) -> Unit = {},
     onStartNavigation: (SavedRoute) -> Unit = {},
     onNavigateToSettings: () -> Unit = {}
@@ -130,5 +133,5 @@ fun RoutesScreen(
 @Preview(showBackground = true)
 @Composable
 fun RoutesScreenPreview() {
-    RoutesScreen()
+    RoutesScreen(viewModel = previewRoutesViewModel)
 }

@@ -19,6 +19,8 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.DirectionsWalk
+import androidx.compose.material.icons.filled.ArrowDropDown
+import androidx.compose.material.icons.filled.ArrowDropUp
 import androidx.compose.material.icons.filled.BatteryFull
 import androidx.compose.material.icons.filled.BluetoothConnected
 import androidx.compose.material.icons.filled.BluetoothDisabled
@@ -30,24 +32,27 @@ import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.RecordVoiceOver
-import androidx.compose.material.icons.filled.Route
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Watch
 import androidx.compose.material.icons.filled.Work
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.zIndex
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.semantics.contentDescription
@@ -58,6 +63,7 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.compose.foundation.layout.offset
 
 @Composable
 fun ProfileScreen(
@@ -111,6 +117,20 @@ fun ProfileScreen(
             item {
                 Spacer(modifier = Modifier.height(24.dp))
             }
+        }
+
+        // Small settings button pinned to top-right so NavGraph's onNavigateToSettings can be used.
+        IconButton(
+            onClick = onNavigateToSettings,
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .padding(12.dp)
+        ) {
+            Icon(
+                imageVector = Icons.Default.Settings,
+                contentDescription = "Open settings",
+                tint = Color(0xFF424242)
+            )
         }
     }
 }
@@ -382,90 +402,192 @@ private fun EmergencyOverviewSection(settings: EmergencySettings) {
         icon = Icons.Default.ContactPhone,
         iconColor = Color(0xFFE53935)
     ) {
-        // Emergency contacts count
-        Row(
+        // single expanded state for the whole contacts list
+        val expanded = remember { androidx.compose.runtime.mutableStateOf(false) }
+
+        // Slightly inset surface to make container appear smaller than the card
+        Surface(
             modifier = Modifier
                 .fillMaxWidth()
-                .clip(RoundedCornerShape(12.dp))
-                .background(Color(0xFFFFEBEE))
-                .padding(16.dp)
-                .semantics(mergeDescendants = true) {
-                    contentDescription = contactsDescription
-                },
-            verticalAlignment = Alignment.CenterVertically
+                .padding(horizontal = 8.dp) // inset to make container slightly smaller
+                .clip(RoundedCornerShape(12.dp)),
+            color = Color(0xFFFFEBEE)
         ) {
-            Surface(
-                modifier = Modifier.size(44.dp),
-                shape = CircleShape,
-                color = Color(0xFFE53935).copy(alpha = 0.2f)
-            ) {
-                Box(contentAlignment = Alignment.Center) {
+            Column {
+                // Summary row (clickable) toggles expansion for the entire list
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { expanded.value = !expanded.value }
+                        .padding(16.dp)
+                        .semantics(mergeDescendants = true) {
+                            contentDescription = contactsDescription
+                        },
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Surface(
+                        modifier = Modifier.size(44.dp),
+                        shape = CircleShape,
+                        color = Color(0xFFE53935).copy(alpha = 0.2f)
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                imageVector = Icons.Default.ContactPhone,
+                                contentDescription = null,
+                                tint = Color(0xFFE53935),
+                                modifier = Modifier.size(24.dp)
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.width(16.dp))
+
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Emergency Contacts",
+                            style = MaterialTheme.typography.bodyLarge.copy(
+                                fontWeight = FontWeight.Medium,
+                                fontSize = 16.sp
+                            ),
+                            color = Color(0xFF1A1A1A)
+                        )
+                        Text(
+                            text = when (contactCount) {
+                                0 -> "None saved"
+                                1 -> "1 contact saved"
+                                else -> "$contactCount contacts saved"
+                            },
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = Color(0xFFE53935)
+                        )
+                    }
+
                     Icon(
-                        imageVector = Icons.Default.ContactPhone,
-                        contentDescription = null,
-                        tint = Color(0xFFE53935),
-                        modifier = Modifier.size(24.dp)
+                        imageVector = if (expanded.value) Icons.Default.ArrowDropUp else Icons.Default.ArrowDropDown,
+                        contentDescription = if (expanded.value) "Collapse contacts" else "Expand contacts",
+                        tint = Color(0xFF666666),
+                        modifier = Modifier.size(28.dp)
                     )
                 }
-            }
-            Spacer(modifier = Modifier.width(16.dp))
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = "Emergency Contacts",
-                    style = MaterialTheme.typography.bodyLarge.copy(
-                        fontWeight = FontWeight.Medium,
-                        fontSize = 16.sp
-                    ),
-                    color = Color(0xFF1A1A1A)
-                )
-                Text(
-                    text = when (contactCount) {
-                        0 -> "None saved"
-                        1 -> "1 contact saved"
-                        else -> "$contactCount contacts saved"
-                    },
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = Color(0xFFE53935)
-                )
-            }
-            // Show contact names if available
-            if (contactCount > 0) {
-                Surface(
-                    shape = CircleShape,
-                    color = Color(0xFFE53935)
-                ) {
-                    Text(
-                        text = "$contactCount",
-                        style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold),
-                        color = Color.White,
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
-                    )
+
+                // Stronger divider to create a clearer 'stack' separation
+                if (expanded.value && contactCount > 0) {
+                    HorizontalDivider(color = Color(0xFF9E9E9E), thickness = 0.5.dp)
+
+                    // contact rows inside the same continuous container; remove top padding so first card
+                    // connects directly to the divider (stack effect). Increase horizontal inset so cards
+                    // appear narrower (smaller left/right visual width).
+                    Column(
+                        modifier = Modifier.padding(
+                            start = 24.dp,
+                            end = 24.dp,
+                            top = 0.dp,
+                            bottom = 8.dp
+                        )
+                    ) {
+                        settings.contacts.forEachIndexed { idx, contact ->
+                            // Each contact is rendered with transparent container and no elevation so it visually
+                            // connects (stacks) under the summary divider.
+                            val isFirst = idx == 0
+                            Card(
+                                // make each card narrower by filling a fraction of the available width
+                                modifier = Modifier
+                                    .fillMaxWidth(0.86f)
+                                    .offset(y = (-(4 * idx)).dp)
+                                    .zIndex((idx + 1).toFloat())
+                                    .align(Alignment.CenterHorizontally),
+                                // make the card transparent so there's no white background
+                                colors = CardDefaults.cardColors(containerColor = Color.Transparent),
+                                // remove elevation to avoid separate surface shadow
+                                elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+                                // flatten top corners for the first item so it lines up with the divider
+                                shape = if (isFirst) RoundedCornerShape(
+                                    topStart = 0.dp,
+                                    topEnd = 0.dp,
+                                    bottomStart = 10.dp,
+                                    bottomEnd = 10.dp
+                                ) else RoundedCornerShape(10.dp)
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        // reduce top padding for the first item so it visually 'connects' to the divider
+                                        .padding(
+                                            horizontal = 12.dp,
+                                            vertical = if (isFirst) 4.dp else 12.dp
+                                        )
+                                        .semantics(mergeDescendants = true) {
+                                            contentDescription =
+                                                "Emergency contact ${contact.name.ifEmpty { "Unnamed" }}"
+                                        },
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Surface(
+                                        modifier = Modifier.size(40.dp),
+                                        shape = CircleShape,
+                                        color = Color(0xFFE53935).copy(alpha = 0.15f)
+                                    ) {
+                                        Box(contentAlignment = Alignment.Center) {
+                                            Icon(
+                                                imageVector = Icons.Default.ContactPhone,
+                                                contentDescription = null,
+                                                tint = Color(0xFFE53935),
+                                                modifier = Modifier.size(20.dp)
+                                            )
+                                        }
+                                    }
+
+                                    Spacer(modifier = Modifier.width(12.dp))
+
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = contact.name.ifEmpty { "Unnamed contact" },
+                                            style = MaterialTheme.typography.bodyLarge.copy(
+                                                fontWeight = FontWeight.Medium
+                                            ),
+                                            color = Color(0xFF1A1A1A)
+                                        )
+                                        Text(
+                                            text = contact.phoneNumber.ifEmpty { "No number" },
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = Color(0xFF666666)
+                                        )
+                                    }
+                                }
+                            }
+
+                            // visible divider between stacked cards
+                            if (idx < settings.contacts.lastIndex) {
+                                HorizontalDivider(color = Color(0xFF9E9E9E), thickness = 2.dp)
+                                Spacer(modifier = Modifier.height(6.dp))
+                            }
+                        }
+                    }
                 }
             }
         }
 
-        Spacer(modifier = Modifier.height(12.dp))
-
-        // Auto-arrival notification status
-        val arrivalStatus = if (settings.autoArrivalNotification) "enabled" else "disabled"
+        // Auto-Arrival Notifications — placed outside the expandable contacts surface so it is always visible
+        Spacer(modifier = Modifier.height(8.dp))
         Row(
             modifier = Modifier
                 .fillMaxWidth()
+                .padding(horizontal = 8.dp)
                 .clip(RoundedCornerShape(12.dp))
                 .background(Color(0xFFF5F5F5))
-                .padding(16.dp)
+                .padding(12.dp)
                 .semantics(mergeDescendants = true) {
-                    contentDescription = "Auto-arrival notifications are $arrivalStatus."
+                    contentDescription =
+                        if (settings.autoArrivalNotification) "Auto-arrival enabled" else "Auto-arrival disabled"
                 },
             verticalAlignment = Alignment.CenterVertically
         ) {
             Surface(
                 modifier = Modifier.size(44.dp),
                 shape = CircleShape,
-                color = if (settings.autoArrivalNotification)
-                    Color(0xFF4CAF50).copy(alpha = 0.15f)
-                else
-                    Color(0xFF9E9E9E).copy(alpha = 0.15f)
+                color = if (settings.autoArrivalNotification) Color(0xFF4CAF50).copy(alpha = 0.15f) else Color(
+                    0xFF9E9E9E
+                ).copy(alpha = 0.15f)
             ) {
                 Box(contentAlignment = Alignment.Center) {
                     Icon(
@@ -482,26 +604,15 @@ private fun EmergencyOverviewSection(settings: EmergencySettings) {
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = "Auto-Arrival Notifications",
-                    style = MaterialTheme.typography.bodyLarge.copy(
-                        fontWeight = FontWeight.Medium,
-                        fontSize = 16.sp
-                    ),
+                    style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Medium),
                     color = Color(0xFF1A1A1A)
                 )
                 Text(
                     text = if (settings.autoArrivalNotification) "Enabled" else "Disabled",
-                    style = MaterialTheme.typography.bodyMedium,
+                    style = MaterialTheme.typography.bodySmall,
                     color = if (settings.autoArrivalNotification) Color(0xFF4CAF50) else Color(
-                        0xFF9E9E9E
+                        0xFF666666
                     )
-                )
-            }
-            if (settings.autoArrivalNotification) {
-                Icon(
-                    imageVector = Icons.Default.Check,
-                    contentDescription = null,
-                    tint = Color(0xFF4CAF50),
-                    modifier = Modifier.size(24.dp)
                 )
             }
         }

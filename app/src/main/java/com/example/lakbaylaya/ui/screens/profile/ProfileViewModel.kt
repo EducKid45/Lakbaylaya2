@@ -1,9 +1,15 @@
 package com.example.lakbaylaya.ui.screens.profile
 
-import androidx.lifecycle.ViewModel
+import android.app.Application
+import android.util.Log
+import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.viewModelScope
+import com.example.lakbaylaya.data.repository.UserProfileRepository
+import com.example.lakbaylaya.data.room.UserProfileEntity
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 
 /**
  * User profile information
@@ -128,14 +134,68 @@ data class ProfileUiState(
 
 /**
  * ViewModel for managing user profile and settings
+ * Now backed by Room: loads saved profile on init and saves updates to Room so other screens observe persisted data.
  */
-class ProfileViewModel : ViewModel() {
+class ProfileViewModel(application: Application) : AndroidViewModel(application) {
+
+    // repository to read/write the single user profile row
+    private val repo = UserProfileRepository.create(application.applicationContext)
 
     private val _uiState = MutableStateFlow(ProfileUiState())
     val uiState: StateFlow<ProfileUiState> = _uiState.asStateFlow()
 
+    // Debugging helper: last observed raw profile string from DB
+    private val _lastObservedProfile = MutableStateFlow("")
+    val lastObservedProfile: StateFlow<String> = _lastObservedProfile.asStateFlow()
+
+    companion object {
+        private const val TAG = "ProfileViewModel"
+    }
+
     init {
-        loadSampleData()
+        // load saved profile from Room; fall back to sample data if none
+        viewModelScope.launch {
+            repo.observeProfile().collect { saved ->
+                if (saved != null) {
+                    // log observed values for debugging
+                    Log.d(
+                        TAG,
+                        "Observed profile from DB: name='${saved.name}', emergencyName='${saved.emergencyContactName}', emergencyNumber='${saved.emergencyContactNumber}', home='${saved.homeAddress}'"
+                    )
+
+                    // update debug state
+                    _lastObservedProfile.value =
+                        "name='${saved.name}', emergencyName='${saved.emergencyContactName}', emergencyNumber='${saved.emergencyContactNumber}', home='${saved.homeAddress}'"
+
+                    // map saved profile to UI state, including emergency contact mapped into emergencySettings
+                    val contacts =
+                        if (saved.emergencyContactName.isNotBlank() || saved.emergencyContactNumber.isNotBlank()) {
+                            listOf(
+                                EmergencyContact(
+                                    id = "primary",
+                                    name = saved.emergencyContactName,
+                                    phoneNumber = saved.emergencyContactNumber
+                                )
+                            )
+                        } else {
+                            emptyList()
+                        }
+
+                    _uiState.value = _uiState.value.copy(
+                        userProfile = UserProfile(
+                            name = saved.name,
+                            homeLocation = saved.homeAddress,
+                            workLocation = ""
+                        ),
+                        emergencySettings = _uiState.value.emergencySettings.copy(contacts = contacts)
+                    )
+
+                    Log.d(TAG, "UI state updated with ${contacts.size} emergency contacts")
+                } else {
+                    loadSampleData()
+                }
+            }
+        }
     }
 
     private fun loadSampleData() {
@@ -205,11 +265,27 @@ class ProfileViewModel : ViewModel() {
     }
 
     fun updateProfile(name: String, homeLocation: String, workLocation: String) {
+        // update UI state immediately
         _uiState.value = _uiState.value.copy(
             userProfile = UserProfile(name, homeLocation, workLocation),
             isEditingProfile = false,
             feedbackMessage = "Profile updated successfully"
         )
+
+        // persist to Room (single-row)
+        viewModelScope.launch {
+            repo.saveProfile(
+                UserProfileEntity(
+                    id = 0,
+                    name = name,
+                    emergencyContactName = _uiState.value.emergencySettings.contacts.firstOrNull()?.name
+                        ?: "",
+                    emergencyContactNumber = _uiState.value.emergencySettings.contacts.firstOrNull()?.phoneNumber
+                        ?: "",
+                    homeAddress = homeLocation
+                )
+            )
+        }
     }
 
     // Emergency contacts
@@ -233,6 +309,23 @@ class ProfileViewModel : ViewModel() {
             emergencySettings = _uiState.value.emergencySettings.copy(contacts = updatedContacts),
             feedbackMessage = "Emergency contact added"
         )
+
+        // persist contact to profile entity as the first contact (simple approach)
+        viewModelScope.launch {
+            val current = repo.getProfile() ?: UserProfileEntity(
+                id = 0,
+                name = _uiState.value.userProfile.name,
+                emergencyContactName = "",
+                emergencyContactNumber = "",
+                homeAddress = _uiState.value.userProfile.homeLocation
+            )
+            repo.saveProfile(
+                current.copy(
+                    emergencyContactName = name,
+                    emergencyContactNumber = phoneNumber
+                )
+            )
+        }
     }
 
     fun removeEmergencyContact(contactId: String) {
@@ -242,6 +335,19 @@ class ProfileViewModel : ViewModel() {
             emergencySettings = _uiState.value.emergencySettings.copy(contacts = updatedContacts),
             feedbackMessage = "Emergency contact removed"
         )
+
+        // persist removal if needed
+        viewModelScope.launch {
+            val current = repo.getProfile()
+            if (current != null && current.emergencyContactName.isNotBlank()) {
+                repo.saveProfile(
+                    current.copy(
+                        emergencyContactName = "",
+                        emergencyContactNumber = ""
+                    )
+                )
+            }
+        }
     }
 
     // Emergency message

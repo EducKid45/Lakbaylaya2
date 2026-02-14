@@ -1,51 +1,39 @@
 package com.example.lakbaylaya.ui.screens.route
 
 import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import com.example.lakbaylaya.data.repository.RoutesRepository
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 
-/**
- * Represents a saved/familiar route
- */
-data class SavedRoute(
-    val id: String,
-    val name: String,
-    val startLocation: String,
-    val endLocation: String,
-    val distanceKm: Double,
-    val estimatedMinutes: Int,
-    val hasVoiceNotes: Boolean = false,
-    val hasDifficultSegments: Boolean = false,
-    val landmarks: List<String> = emptyList(),
-    val voiceNoteCount: Int = 0,
-    val difficultSegmentCount: Int = 0
-)
+/** Manages UI state and persistence operations for the Routes screen. */
+class RoutesViewModel(private val routesRepository: RoutesRepository?) : ViewModel() {
 
-/**
- * UI state for the Routes screen
- */
-data class RoutesUiState(
-    val savedRoutes: List<SavedRoute> = emptyList(),
-    val selectedRoute: SavedRoute? = null,
-    val isDetailPanelVisible: Boolean = false,
-    val isLoading: Boolean = false,
-    val errorMessage: String? = null,
-    val isRenameDialogVisible: Boolean = false,
-    val isDeleteDialogVisible: Boolean = false
-)
-
-/**
- * ViewModel for managing saved/familiar routes
- */
-class RoutesViewModel : ViewModel() {
-
-    private val _uiState = MutableStateFlow(RoutesUiState())
+    private val _uiState: MutableStateFlow<RoutesUiState> = MutableStateFlow(RoutesUiState())
     val uiState: StateFlow<RoutesUiState> = _uiState.asStateFlow()
 
     init {
-        // Load sample routes for demonstration
-        loadSampleRoutes()
+        // Load persisted routes if repository is provided; otherwise load sample data for preview.
+        if (routesRepository != null) {
+            viewModelScope.launch {
+                _uiState.value = _uiState.value.copy(isLoading = true)
+                val res = routesRepository.listRoutes()
+                if (res.isSuccess) {
+                    _uiState.value = _uiState.value.copy(
+                        savedRoutes = res.getOrDefault(emptyList()),
+                        isLoading = false
+                    )
+                } else {
+                    // Fallback to sample routes on error
+                    loadSampleRoutes()
+                    _uiState.value = _uiState.value.copy(isLoading = false)
+                }
+            }
+        } else {
+            loadSampleRoutes()
+        }
     }
 
     private fun loadSampleRoutes() {
@@ -75,37 +63,12 @@ class RoutesViewModel : ViewModel() {
                 landmarks = listOf("Bus Stop", "Main Street", "Office Building"),
                 voiceNoteCount = 2,
                 difficultSegmentCount = 0
-            ),
-            SavedRoute(
-                id = "3",
-                name = "Home to Grocery Store",
-                startLocation = "Home",
-                endLocation = "Grocery Store",
-                distanceKm = 0.8,
-                estimatedMinutes = 10,
-                hasVoiceNotes = false,
-                hasDifficultSegments = true,
-                landmarks = listOf("Corner Store", "Traffic Light"),
-                voiceNoteCount = 0,
-                difficultSegmentCount = 1
-            ),
-            SavedRoute(
-                id = "4",
-                name = "Home to Park",
-                startLocation = "Home",
-                endLocation = "City Park",
-                distanceKm = 1.0,
-                estimatedMinutes = 12,
-                hasVoiceNotes = false,
-                hasDifficultSegments = false,
-                landmarks = listOf("Fountain", "Playground"),
-                voiceNoteCount = 0,
-                difficultSegmentCount = 0
             )
         )
         _uiState.value = _uiState.value.copy(savedRoutes = sampleRoutes)
     }
 
+    /** Selects a route and shows the detail panel. */
     fun selectRoute(route: SavedRoute) {
         _uiState.value = _uiState.value.copy(
             selectedRoute = route,
@@ -113,6 +76,7 @@ class RoutesViewModel : ViewModel() {
         )
     }
 
+    /** Closes the detail panel and clears the selection. */
     fun closeDetailPanel() {
         _uiState.value = _uiState.value.copy(
             selectedRoute = null,
@@ -120,14 +84,19 @@ class RoutesViewModel : ViewModel() {
         )
     }
 
+    /** Shows the rename dialog. */
     fun showRenameDialog() {
         _uiState.value = _uiState.value.copy(isRenameDialogVisible = true)
     }
 
+    /** Hides the rename dialog. */
     fun hideRenameDialog() {
         _uiState.value = _uiState.value.copy(isRenameDialogVisible = false)
     }
 
+    /** Rename selected route and persist change.
+     * @param newName New display name for the route.
+     */
     fun renameRoute(newName: String) {
         val selectedRoute = _uiState.value.selectedRoute ?: return
         val updatedRoute = selectedRoute.copy(name = newName)
@@ -139,42 +108,119 @@ class RoutesViewModel : ViewModel() {
             selectedRoute = updatedRoute,
             isRenameDialogVisible = false
         )
+
+        // Persist rename if repository available
+        viewModelScope.launch {
+            if (routesRepository != null) {
+                routesRepository.saveRoute(updatedRoute)
+                // refresh
+                val r = routesRepository.listRoutes()
+                if (r.isSuccess) _uiState.value =
+                    _uiState.value.copy(savedRoutes = r.getOrDefault(emptyList()))
+            }
+        }
     }
 
+    /** Shows delete confirmation dialog. */
     fun showDeleteDialog() {
         _uiState.value = _uiState.value.copy(isDeleteDialogVisible = true)
     }
 
+    /** Hides delete confirmation dialog. */
     fun hideDeleteDialog() {
         _uiState.value = _uiState.value.copy(isDeleteDialogVisible = false)
     }
 
+    /** Delete the selected route and update persistence. */
     fun deleteRoute() {
         val selectedRoute = _uiState.value.selectedRoute ?: return
-        val updatedRoutes = _uiState.value.savedRoutes.filter { it.id != selectedRoute.id }
-        _uiState.value = _uiState.value.copy(
-            savedRoutes = updatedRoutes,
-            selectedRoute = null,
-            isDetailPanelVisible = false,
-            isDeleteDialogVisible = false
-        )
+        viewModelScope.launch {
+            if (routesRepository != null) {
+                routesRepository.deleteRoute(selectedRoute.id)
+                val listRes = routesRepository.listRoutes()
+                if (listRes.isSuccess) {
+                    _uiState.value = _uiState.value.copy(
+                        savedRoutes = listRes.getOrDefault(emptyList()),
+                        selectedRoute = null,
+                        isDeleteDialogVisible = false,
+                        isDetailPanelVisible = false
+                    )
+                    return@launch
+                }
+            }
+            val updatedRoutes = _uiState.value.savedRoutes.filter { it.id != selectedRoute.id }
+            _uiState.value = _uiState.value.copy(
+                savedRoutes = updatedRoutes,
+                selectedRoute = null,
+                isDetailPanelVisible = false,
+                isDeleteDialogVisible = false
+            )
+        }
     }
 
+    /** Save the current route (or placeholder) into storage. */
     fun saveCurrentRoute() {
-        // TODO: Integrate with navigation system to save current active route
-        _uiState.value = _uiState.value.copy(
-            errorMessage = "Route saved successfully"
-        )
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(isLoading = true, errorMessage = null)
+
+            val snapshotSource = _uiState.value.selectedRoute
+            val routeToSave = snapshotSource ?: SavedRoute(
+                id = java.util.UUID.randomUUID().toString(),
+                name = "Saved Route ${System.currentTimeMillis()}",
+                startLocation = "Unknown",
+                endLocation = "Unknown",
+                distanceKm = 0.0,
+                estimatedMinutes = 0
+            )
+
+            if (routesRepository == null) {
+                _uiState.value = _uiState.value.copy(
+                    isLoading = false,
+                    errorMessage = "No repository configured"
+                )
+                return@launch
+            }
+
+            val res = try {
+                routesRepository.saveRoute(routeToSave)
+            } catch (t: Throwable) {
+                Result.failure<Unit>(t)
+            }
+
+            if (res.isSuccess) {
+                val listRes = routesRepository.listRoutes()
+                if (listRes.isSuccess) {
+                    _uiState.value = _uiState.value.copy(
+                        savedRoutes = listRes.getOrDefault(emptyList()),
+                        isLoading = false
+                    )
+                } else {
+                    _uiState.value = _uiState.value.copy(
+                        isLoading = false,
+                        errorMessage = listRes.exceptionOrNull()?.localizedMessage
+                            ?: "Saved but failed to load"
+                    )
+                }
+            } else {
+                _uiState.value = _uiState.value.copy(
+                    isLoading = false,
+                    errorMessage = res.exceptionOrNull()?.localizedMessage ?: "Failed to save route"
+                )
+            }
+        }
     }
 
+    /** Play a sample voice note for a route (TODO: implement playback). */
     fun playVoiceNote(routeId: String) {
         // TODO: Integrate with audio playback system
     }
 
+    /** Play difficulty warning for a route (TODO: implement TTS). */
     fun playDifficultyWarning(routeId: String) {
         // TODO: Integrate with TTS to announce difficulty warnings
     }
 
+    /** Clears any UI error message. */
     fun clearError() {
         _uiState.value = _uiState.value.copy(errorMessage = null)
     }
@@ -213,3 +259,30 @@ class RoutesViewModel : ViewModel() {
         }
     }
 }
+
+/** Domain model for a saved route. */
+data class SavedRoute(
+    val id: String,
+    val name: String,
+    val startLocation: String,
+    val endLocation: String,
+    val distanceKm: Double,
+    val estimatedMinutes: Int,
+    val hasVoiceNotes: Boolean = false,
+    val hasDifficultSegments: Boolean = false,
+    val landmarks: List<String> = emptyList(),
+    val voiceNoteCount: Int = 0,
+    val difficultSegmentCount: Int = 0,
+    val polyline: String? = null
+)
+
+/** UI state container for the Routes screen. */
+data class RoutesUiState(
+    val savedRoutes: List<SavedRoute> = emptyList(),
+    val selectedRoute: SavedRoute? = null,
+    val isDetailPanelVisible: Boolean = false,
+    val isLoading: Boolean = false,
+    val errorMessage: String? = null,
+    val isRenameDialogVisible: Boolean = false,
+    val isDeleteDialogVisible: Boolean = false
+)
