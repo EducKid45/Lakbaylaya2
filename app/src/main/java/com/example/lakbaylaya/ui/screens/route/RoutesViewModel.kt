@@ -3,36 +3,67 @@ package com.example.lakbaylaya.ui.screens.route
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.lakbaylaya.data.repository.RoutesRepository
+import com.example.lakbaylaya.data.repository.SavedPlaceRepository
+import com.example.lakbaylaya.data.repository.CustomMarkerRepository
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
 /** Manages UI state and persistence operations for the Routes screen. */
-class RoutesViewModel(private val routesRepository: RoutesRepository?) : ViewModel() {
+class RoutesViewModel(
+    private val routesRepository: RoutesRepository?,
+    private val savedPlaceRepository: SavedPlaceRepository?,
+    private val customMarkerRepository: CustomMarkerRepository?
+) : ViewModel() {
 
     private val _uiState: MutableStateFlow<RoutesUiState> = MutableStateFlow(RoutesUiState())
     val uiState: StateFlow<RoutesUiState> = _uiState.asStateFlow()
 
     init {
-        // Load persisted routes if repository is provided; otherwise load sample data for preview.
-        if (routesRepository != null) {
-            viewModelScope.launch {
-                _uiState.value = _uiState.value.copy(isLoading = true)
-                val res = routesRepository.listRoutes()
-                if (res.isSuccess) {
+        // Load all persisted data
+        loadAllData()
+    }
+
+    private fun loadAllData() {
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(isLoading = true)
+
+            // Load routes
+            if (routesRepository != null) {
+                val routesRes = routesRepository.listRoutes()
+                if (routesRes.isSuccess) {
                     _uiState.value = _uiState.value.copy(
-                        savedRoutes = res.getOrDefault(emptyList()),
-                        isLoading = false
+                        savedRoutes = routesRes.getOrDefault(emptyList())
                     )
                 } else {
-                    // Fallback to sample routes on error
                     loadSampleRoutes()
-                    _uiState.value = _uiState.value.copy(isLoading = false)
+                }
+            } else {
+                loadSampleRoutes()
+            }
+
+            // Load places
+            if (savedPlaceRepository != null) {
+                val placesRes = savedPlaceRepository.listPlaces()
+                if (placesRes.isSuccess) {
+                    _uiState.value = _uiState.value.copy(
+                        savedPlaces = placesRes.getOrDefault(emptyList())
+                    )
                 }
             }
-        } else {
-            loadSampleRoutes()
+
+            // Load markers
+            if (customMarkerRepository != null) {
+                val markersRes = customMarkerRepository.listMarkers()
+                if (markersRes.isSuccess) {
+                    _uiState.value = _uiState.value.copy(
+                        customMarkers = markersRes.getOrDefault(emptyList())
+                    )
+                }
+            }
+
+            _uiState.value = _uiState.value.copy(isLoading = false)
         }
     }
 
@@ -225,6 +256,34 @@ class RoutesViewModel(private val routesRepository: RoutesRepository?) : ViewMod
         _uiState.value = _uiState.value.copy(errorMessage = null)
     }
 
+    /** Delete a place by id. */
+    fun deletePlace(placeId: String) {
+        viewModelScope.launch {
+            savedPlaceRepository?.deletePlace(placeId)
+            // Reload places
+            val placesRes = savedPlaceRepository?.listPlaces()
+            if (placesRes?.isSuccess == true) {
+                _uiState.value = _uiState.value.copy(
+                    savedPlaces = placesRes.getOrDefault(emptyList())
+                )
+            }
+        }
+    }
+
+    /** Delete a marker by id. */
+    fun deleteMarker(markerId: String) {
+        viewModelScope.launch {
+            customMarkerRepository?.deleteMarker(markerId)
+            // Reload markers
+            val markersRes = customMarkerRepository?.listMarkers()
+            if (markersRes?.isSuccess == true) {
+                _uiState.value = _uiState.value.copy(
+                    customMarkers = markersRes.getOrDefault(emptyList())
+                )
+            }
+        }
+    }
+
     // Voice command handlers
     fun executeVoiceCommand(command: String) {
         val normalizedCommand = command.lowercase().trim()
@@ -266,6 +325,10 @@ data class SavedRoute(
     val name: String,
     val startLocation: String,
     val endLocation: String,
+    val startLatitude: Double = 0.0,
+    val startLongitude: Double = 0.0,
+    val endLatitude: Double = 0.0,
+    val endLongitude: Double = 0.0,
     val distanceKm: Double,
     val estimatedMinutes: Int,
     val hasVoiceNotes: Boolean = false,
@@ -273,12 +336,16 @@ data class SavedRoute(
     val landmarks: List<String> = emptyList(),
     val voiceNoteCount: Int = 0,
     val difficultSegmentCount: Int = 0,
-    val polyline: String? = null
+    val polyline: String? = null,
+    val routeSteps: List<com.example.lakbaylaya.ui.screens.map.models.DirectionStep>? = null,
+    val createdAt: Long = System.currentTimeMillis()
 )
 
 /** UI state container for the Routes screen. */
 data class RoutesUiState(
     val savedRoutes: List<SavedRoute> = emptyList(),
+    val savedPlaces: List<SavedPlace> = emptyList(),
+    val customMarkers: List<CustomMarker> = emptyList(),
     val selectedRoute: SavedRoute? = null,
     val isDetailPanelVisible: Boolean = false,
     val isLoading: Boolean = false,

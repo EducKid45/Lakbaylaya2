@@ -4,6 +4,7 @@ import android.content.Context
 import com.example.lakbaylaya.data.room.RoutesDatabase
 import com.example.lakbaylaya.data.room.SavedRouteEntity
 import com.example.lakbaylaya.ui.screens.route.SavedRoute
+import com.example.lakbaylaya.ui.screens.map.models.DirectionStep
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import kotlinx.coroutines.Dispatchers
@@ -27,6 +28,10 @@ class RoutesRepositoryRoom(context: Context) : RoutesRepository {
                 name = route.name,
                 startLocation = route.startLocation,
                 endLocation = route.endLocation,
+                startLatitude = route.startLatitude,
+                startLongitude = route.startLongitude,
+                endLatitude = route.endLatitude,
+                endLongitude = route.endLongitude,
                 distanceKm = route.distanceKm,
                 estimatedMinutes = route.estimatedMinutes,
                 hasVoiceNotes = route.hasVoiceNotes,
@@ -34,7 +39,9 @@ class RoutesRepositoryRoom(context: Context) : RoutesRepository {
                 landmarksJson = gson.toJson(route.landmarks),
                 voiceNoteCount = route.voiceNoteCount,
                 difficultSegmentCount = route.difficultSegmentCount,
-                polyline = route.polyline
+                polyline = route.polyline,
+                routeStepsJson = route.routeSteps?.let { gson.toJson(it) },
+                createdAt = route.createdAt
             )
             dao.insert(entity)
             Result.success(Unit)
@@ -48,17 +55,29 @@ class RoutesRepositoryRoom(context: Context) : RoutesRepository {
         try {
             val entities = dao.getAll()
             val list = entities.map { e ->
-                val type = object : TypeToken<List<String>>() {}.type
+                val landmarksType = object : TypeToken<List<String>>() {}.type
                 val landmarks: List<String> = try {
-                    gson.fromJson(e.landmarksJson, type) ?: emptyList()
+                    gson.fromJson(e.landmarksJson, landmarksType) ?: emptyList()
                 } catch (t: Throwable) {
                     emptyList()
                 }
+
+                val routeStepsType = object : TypeToken<List<DirectionStep>>() {}.type
+                val routeSteps: List<DirectionStep>? = try {
+                    e.routeStepsJson?.let { gson.fromJson(it, routeStepsType) }
+                } catch (t: Throwable) {
+                    null
+                }
+
                 SavedRoute(
                     id = e.id,
                     name = e.name,
                     startLocation = e.startLocation,
                     endLocation = e.endLocation,
+                    startLatitude = e.startLatitude,
+                    startLongitude = e.startLongitude,
+                    endLatitude = e.endLatitude,
+                    endLongitude = e.endLongitude,
                     distanceKm = e.distanceKm,
                     estimatedMinutes = e.estimatedMinutes,
                     hasVoiceNotes = e.hasVoiceNotes,
@@ -66,7 +85,9 @@ class RoutesRepositoryRoom(context: Context) : RoutesRepository {
                     landmarks = landmarks,
                     voiceNoteCount = e.voiceNoteCount,
                     difficultSegmentCount = e.difficultSegmentCount,
-                    polyline = e.polyline
+                    polyline = e.polyline,
+                    routeSteps = routeSteps,
+                    createdAt = e.createdAt
                 )
             }
             Result.success(list)

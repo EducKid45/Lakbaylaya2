@@ -60,8 +60,14 @@ fun NavGraph(
         composable(NavRoutes.Route.route) { backStackEntry ->
             // Use remember so repository and factory are not recreated on every recomposition
             val context = LocalContext.current
-            val repo = remember { RoutesRepositoryRoom(context.applicationContext) }
-            val factory = remember(repo) { RoutesViewModelFactory(repo) }
+            val routesRepo = remember { RoutesRepositoryRoom(context.applicationContext) }
+            val placesRepo =
+                remember { com.example.lakbaylaya.data.repository.SavedPlaceRepositoryImpl(context.applicationContext) }
+            val markersRepo =
+                remember { com.example.lakbaylaya.data.repository.CustomMarkerRepositoryImpl(context.applicationContext) }
+            val factory = remember(routesRepo, placesRepo, markersRepo) {
+                RoutesViewModelFactory(routesRepo, placesRepo, markersRepo)
+            }
 
             // Scope ViewModel to this nav backStackEntry so it's lifecycle-aware and cleared on pop
             val viewModel: com.example.lakbaylaya.ui.screens.route.RoutesViewModel =

@@ -20,6 +20,8 @@
     <!-- Permissions for voice notes recording and feedback -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.VIBRATE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission
         android:name="android.permission.WRITE_EXTERNAL_STORAGE"
         android:maxSdkVersion="28"
@@ -72,6 +74,13 @@
                 <action android:name="com.example.lakbaylaya.SMS_DELIVERED" />
             </intent-filter>
         </receiver>
+
+        <!-- Voice Command Foreground Service -->
+        <service
+            android:name=".service.VoiceCommandService"
+            android:enabled="true"
+            android:exported="false"
+            android:foregroundServiceType="microphone" />
 
     </application>
 

@@ -54,7 +54,7 @@ import kotlin.math.abs
  *
  * Features:
  * - Two states: DirectionInitial (collapsed) and DirectionFullExpand (full steps)
- * - Action buttons: Start, Add stops, Share
+ * - Action buttons: Start, Add stops, Save
  * - Address display for origin and destination
  * - Route alternatives for walking (for accessibility)
  * - Route comparison (time, distance, etc.)
@@ -79,8 +79,9 @@ fun DirectionBottomSheet(
     topInsetAdjustment: Dp = 100.dp,
     modifier: Modifier = Modifier,
     bottomNavigationHeight: Dp = 80.dp,
-    onClose: () -> Unit = {} // Called when user presses the close X to exit directions mode
-    , onStartNavigation: () -> Unit = {} // Called when user presses the Start button to begin navigation
+    onClose: () -> Unit = {}, // Called when user presses the close X to exit directions mode
+    onStartNavigation: () -> Unit = {}, // Called when user presses the Start button to begin navigation
+    onSaveRoute: () -> Unit = {} // Called when user presses the Save button to save the route
 ) {
     // Only render for Direction states
     val directionData = when (sheetState) {
@@ -227,7 +228,8 @@ fun DirectionBottomSheet(
                             route = selectedRoute,
                             directionData = directionData,
                             onAddStopsClick = onAddStopsClick,
-                            onStartNavigation = onStartNavigation // propagate callback
+                            onStartNavigation = onStartNavigation,
+                            onSaveRoute = onSaveRoute
                         )
                     }
                 } else {
@@ -238,7 +240,8 @@ fun DirectionBottomSheet(
                         onStateChange = onStateChange,
                         onAddStopsClick = onAddStopsClick,
                         isEditingStops = isEditingStops,
-                        onStartNavigation = onStartNavigation // propagate callback
+                        onStartNavigation = onStartNavigation,
+                        onSaveRoute = onSaveRoute
                     )
                 }
             }
@@ -318,7 +321,8 @@ private fun DirectionInitialContent(
     onStateChange: (BottomSheetState) -> Unit,
     onAddStopsClick: () -> Unit,
     isEditingStops: Boolean,
-    onStartNavigation: () -> Unit // added param to accept start navigation callback
+    onStartNavigation: () -> Unit,
+    onSaveRoute: () -> Unit
 ) {
     val listState = rememberLazyListState()
     val coroutineScope = rememberCoroutineScope()
@@ -427,11 +431,12 @@ private fun DirectionInitialContent(
         }
 
         item {
-            // Action buttons: Start, Add stops, Share (horizontally scrollable fixed-width buttons)
+            // Action buttons: Start, Add stops, Save (horizontally scrollable fixed-width buttons)
             ActionButtonsRow(
                 modifier = Modifier.fillMaxWidth(),
                 onAddStopsClick = onAddStopsClick,
-                onStartNavigation = onStartNavigation
+                onStartNavigation = onStartNavigation,
+                onSaveRoute = onSaveRoute
             )
             Spacer(modifier = Modifier.height(16.dp))
         }
@@ -562,7 +567,8 @@ private fun DirectionFullContent(
     route: RouteOption,
     directionData: DirectionData,
     onAddStopsClick: () -> Unit = {},
-    onStartNavigation: () -> Unit = {}
+    onStartNavigation: () -> Unit = {},
+    onSaveRoute: () -> Unit = {}
 ) {
     val listState = rememberLazyListState()
 
@@ -655,7 +661,8 @@ private fun DirectionFullContent(
             ActionButtonsRow(
                 modifier = Modifier.padding(16.dp),
                 onAddStopsClick = onAddStopsClick,
-                onStartNavigation = onStartNavigation
+                onStartNavigation = onStartNavigation,
+                onSaveRoute = onSaveRoute
             )
         }
     }
@@ -946,13 +953,14 @@ private fun SummaryItem(
 }
 
 /**
- * Action buttons row - Start, Add stops, Share
+ * Action buttons row - Start, Add stops, Save
  */
 @Composable
 private fun ActionButtonsRow(
     modifier: Modifier = Modifier,
     onAddStopsClick: () -> Unit = {},
-    onStartNavigation: () -> Unit = {}
+    onStartNavigation: () -> Unit = {},
+    onSaveRoute: () -> Unit = {}
 ) {
     // Fixed button width to avoid compressing text on small devices; container scrolls horizontally
     val buttonWidth = 160.dp
@@ -1002,19 +1010,19 @@ private fun ActionButtonsRow(
             )
         }
 
-        // Share button
+        // Save button
         OutlinedButton(
-            onClick = { /* TODO: Share route */ },
+            onClick = onSaveRoute,
             modifier = Modifier.width(buttonWidth)
         ) {
             Icon(
-                imageVector = Icons.Default.Share,
+                imageVector = Icons.Default.BookmarkBorder,
                 contentDescription = null,
                 modifier = Modifier.size(20.dp)
             )
             Spacer(modifier = Modifier.width(8.dp))
             Text(
-                text = "Share",
+                text = "Save",
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )

@@ -35,12 +35,14 @@ import com.example.lakbaylaya.ui.screens.map.models.SearchUiState
  * - Content positioned for optimal viewing
  * - Fade-in/out animation
  * - Scrollable list of results
+ * - Marker edit button to reposition pins
  *
  * @param isVisible Whether the overlay is visible (only when search is active)
  * @param searchUiState Current search UI state
  * @param recentSearches List of recent searches
  * @param onResultClick Callback when a result is clicked
  * @param onNavigateClick Callback when navigate button is clicked
+ * @param onMarkerEditClick Callback when marker edit button is clicked (to reposition pin)
  * @param onDismiss Callback when overlay should be dismissed
  * @param modifier Modifier for customization
  */
@@ -51,6 +53,7 @@ fun SearchOverlay(
     recentSearches: List<SearchResult>,
     onResultClick: (SearchResult) -> Unit,
     onNavigateClick: (SearchResult) -> Unit,
+    onMarkerEditClick: (SearchResult) -> Unit,
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -87,7 +90,8 @@ fun SearchOverlay(
                             SearchResultItem(
                                 result = result,
                                 onClick = { onResultClick(result) },
-                                onNavigateClick = { onNavigateClick(result) }
+                                onNavigateClick = { onNavigateClick(result) },
+                                onMarkerEditClick = { onMarkerEditClick(result) }
                             )
                         }
                     } else {
@@ -125,7 +129,8 @@ fun SearchOverlay(
                         SearchResultItem(
                             result = result,
                             onClick = { onResultClick(result) },
-                            onNavigateClick = { onNavigateClick(result) }
+                            onNavigateClick = { onNavigateClick(result) },
+                            onMarkerEditClick = { onMarkerEditClick(result) }
                         )
                     }
                 }

@@ -46,6 +46,13 @@ import com.example.lakbaylaya.data.repository.MapRepositoryImpl
 import com.example.lakbaylaya.data.api.GeoapifyApiImpl
 import kotlinx.coroutines.CompletableDeferred
 import android.location.Location as AndroidLocation
+import androidx.core.app.ActivityCompat
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import android.content.Intent
+import android.speech.RecognizerIntent
+import android.widget.Toast
+
 
 /**
  * Map Screen - Main composable for the map feature with modern UI/UX
@@ -156,11 +163,82 @@ fun MapScreen(
 
     val state by vm.state.collectAsState()
 
+    // Speech recognizer launcher: system voice recognition activity (shows Google mic UI)
+    val speechLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        // Always stop listening state first
+        vm.stopVoiceListening()
+
+        when (result.resultCode) {
+            android.app.Activity.RESULT_OK -> {
+                val data = result.data
+                val matches = data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)
+
+                // Get the best (first) non-empty result
+                val recognizedText = matches?.firstOrNull { it.isNotBlank() }?.trim() ?: ""
+
+                if (recognizedText.isNotBlank()) {
+                    android.util.Log.d("MapScreen", "Speech recognized: '$recognizedText'")
+                    Toast.makeText(context, "✓ Heard: $recognizedText", Toast.LENGTH_SHORT).show()
+
+                    // Send the recognized text to ViewModel to populate search and trigger search
+                    vm.onVoiceResult(recognizedText, true)
+                } else {
+                    android.util.Log.d("MapScreen", "Speech result was empty")
+                    Toast.makeText(context, "No speech detected. Try again.", Toast.LENGTH_SHORT)
+                        .show()
+                }
+            }
+
+            android.app.Activity.RESULT_CANCELED -> {
+                // User cancelled or speech recognizer was dismissed
+                android.util.Log.d("MapScreen", "Speech recognition cancelled by user")
+                // Don't show toast for cancel - user knows they cancelled
+            }
+
+            else -> {
+                // Some error occurred
+                android.util.Log.e(
+                    "MapScreen",
+                    "Speech recognition failed with code: ${result.resultCode}"
+                )
+                Toast.makeText(
+                    context,
+                    "Speech recognition failed. Please try again.",
+                    Toast.LENGTH_SHORT
+                ).show()
+            }
+        }
+    }
+
+    // Permission launcher for RECORD_AUDIO - required before launching speech recognizer
+    val micPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) {
+            // Permission granted, now launch the speech recognizer
+            launchSpeechRecognizer(context, speechLauncher, vm)
+        } else {
+            Toast.makeText(
+                context,
+                "Microphone permission required for voice input",
+                Toast.LENGTH_SHORT
+            ).show()
+            vm.stopVoiceListening()
+        }
+    }
+
     // (No initial metadata) Marker dialog is opened using the selected place only
 
     // Create and remember MapLibreManager (explicit type ensures methods are resolved)
     val mapManager: MapLibreManager = remember { MapLibreManager(context) }
     var isMapReady by remember { mutableStateOf(false) }
+
+    // Set mapManager reference in ViewModel for camera control
+    LaunchedEffect(mapManager) {
+        vm.mapManager = mapManager
+    }
 
     // Center-on-location toggle state (used by FAB and location updates)
     var isCenterOnLocation by remember { mutableStateOf(false) }
@@ -180,6 +258,26 @@ fun MapScreen(
     }
     val focusManager = LocalFocusManager.current
     val composeScope = rememberCoroutineScope()
+
+    // Handle mic click: check permission and launch Google speech recognizer
+    fun handleMicClick() {
+        vm.startVoiceListening()
+
+        // Check if RECORD_AUDIO permission is granted
+        val hasPermission = android.content.pm.PackageManager.PERMISSION_GRANTED ==
+                androidx.core.content.ContextCompat.checkSelfPermission(
+                    context,
+                    android.Manifest.permission.RECORD_AUDIO
+                )
+
+        if (hasPermission) {
+            // Permission already granted, launch speech recognizer directly
+            launchSpeechRecognizer(context, speechLauncher, vm)
+        } else {
+            // Request permission first
+            micPermissionLauncher.launch(android.Manifest.permission.RECORD_AUDIO)
+        }
+    }
 
     // When marker dialog opens, clear focus to dismiss keyboard/search focus which may render UI above the dialog
     LaunchedEffect(showMarkerDialog) {
@@ -547,31 +645,12 @@ fun MapScreen(
                 FloatingSearchBar(
                     query = state.searchQuery,
                     isOverlayActive = state.isSearchOverlayActive,
-                    onQueryChange = { query ->
-                        vm.onSearchQueryChange(query)
-                    },
-                    onSearchBarClick = {
-                        if (!showMarkerDialog) vm.onSearchBarClick()
-                    },
-                    onBackClick = {
-                        if (isEditingStops) {
-                            // If editing stops, go back to Direction Mode
-                            vm.onFinishEditingStops()
-                        } else {
-                            vm.onBackClick()
-                        }
-                    },
-                    onClearClick = {
-                        vm.onClearSearch()
-                    },
-                    onMicClick = {
-                        // TODO: Implement voice search
-                        vm.onSearchBarClick()
-                    },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .zIndex(3f)
-                        .padding(top = topStatusBarPadding)
+                    isMicActive = state.isVoiceListening,
+                    onQueryChange = { vm.onSearchQueryChange(it) },
+                    onSearchBarClick = { vm.onSearchBarClick() },
+                    onBackClick = { vm.onBackClick() },
+                    onClearClick = { vm.onClearSearch() },
+                    onMicClick = { handleMicClick() }
                 )
 
                 // Search results overlay
@@ -590,6 +669,10 @@ fun MapScreen(
                     },
                     onNavigateClick = { result ->
                         vm.navigateToLocation(result)
+                    },
+                    onMarkerEditClick = { result ->
+                        // Open marker editor overlay to reposition pin at search location
+                        vm.onSearchResultMarkerEdit(result)
                     },
                     onDismiss = {
                         if (isEditingStops) {
@@ -774,27 +857,12 @@ fun MapScreen(
                         FloatingSearchBar(
                             query = state.searchQuery,
                             isOverlayActive = state.isSearchOverlayActive,
-                            onQueryChange = { query ->
-                                vm.onSearchQueryChange(query)
-                            },
-                            onSearchBarClick = {
-                                if (!showMarkerDialog) vm.onSearchBarClick()
-                            },
-                            onBackClick = {
-                                vm.onBackClick()
-                            },
-                            onClearClick = {
-                                vm.onClearSearch()
-                            },
-                            onMicClick = {
-                                // TODO: Implement voice search
-                                vm.onSearchBarClick()
-                            },
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .align(Alignment.TopCenter)
-                                .zIndex(3f)
-                                .padding(top = topStatusBarPadding)
+                            isMicActive = state.isVoiceListening,
+                            onQueryChange = { vm.onSearchQueryChange(it) },
+                            onSearchBarClick = { vm.onSearchBarClick() },
+                            onBackClick = { vm.onBackClick() },
+                            onClearClick = { vm.onClearSearch() },
+                            onMicClick = { handleMicClick() }
                         )
                     } else {
                         Spacer(
@@ -1007,6 +1075,123 @@ fun MapScreen(
                     ?: com.example.lakbaylaya.ui.screens.map.models.MarkerMetadata()
             )
         }
+
+        // Marker editor overlay for repositioning search result pins
+        if (state.isMarkerEditing) {
+            com.example.lakbaylaya.ui.screens.map.components.markerEdit.MarkerLocationEditorDialog(
+                isVisible = true,
+                mapManager = mapManager,
+                onLocationSelected = { latitude, longitude, address ->
+                    vm.onMarkerEditConfirmed(latitude, longitude, address)
+                },
+                onCancel = {
+                    vm.onMarkerEditCancelled()
+                }
+            )
+        }
+    }
+}
+
+/**
+ * Launch the system speech recognizer with proper settings to prevent auto-close
+ *
+ * Key settings to prevent premature closing:
+ * - Use WEB_SEARCH language model (more tolerant of pauses)
+ * - Set explicit language
+ * - Configure silence timeouts (API 23+)
+ * - Disable offline mode for better accuracy
+ */
+private fun launchSpeechRecognizer(
+    context: android.content.Context,
+    launcher: androidx.activity.result.ActivityResultLauncher<Intent>,
+    vm: MapViewModel
+) {
+    try {
+        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+            // Use WEB_SEARCH model - it's more tolerant of pauses and background noise
+            // FREE_FORM can close too quickly on some devices
+            putExtra(
+                RecognizerIntent.EXTRA_LANGUAGE_MODEL,
+                RecognizerIntent.LANGUAGE_MODEL_WEB_SEARCH
+            )
+
+            // Explicitly set language - use English for place names, or device default
+            val deviceLocale = java.util.Locale.getDefault()
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE, deviceLocale.toLanguageTag())
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, deviceLocale.toLanguageTag())
+
+            // Also set the only_return_language_preference to false so it accepts any language
+            putExtra("android.speech.extra.ONLY_RETURN_LANGUAGE_PREFERENCE", false)
+
+            // Prompt shown in the recognizer UI - clear instruction
+            putExtra(
+                RecognizerIntent.EXTRA_PROMPT,
+                "🎤 Say a place name (e.g., 'SM Mall', 'Ayala Center')"
+            )
+
+            // ===== CRITICAL: Silence timeout settings to prevent auto-close =====
+            // These require API 23+ but are crucial for preventing early termination
+
+            // Wait 5 seconds of complete silence AFTER speech before ending
+            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 5000L)
+
+            // Wait at least 10 seconds for user to START speaking before timeout
+            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 10000L)
+
+            // Wait 3 seconds after POSSIBLE end of speech (helps with pauses)
+            putExtra(
+                RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS,
+                3000L
+            )
+
+            // ===== Additional settings for better recognition =====
+
+            // Request partial results so user sees what's being heard
+            putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
+
+            // Maximum number of results to return
+            putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3)
+
+            // Prefer online recognition for better accuracy (requires internet)
+            putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, false)
+
+            // Enable dictation mode on some devices (Samsung, etc.)
+            putExtra("android.speech.extra.DICTATION_MODE", true)
+
+            // Secure mode - some devices require this
+            putExtra(RecognizerIntent.EXTRA_SECURE, true)
+        }
+
+        // Check if there's a speech recognizer available
+        val pm = context.packageManager
+        val activities = pm.queryIntentActivities(intent, 0)
+
+        if (activities.isNotEmpty()) {
+            Toast.makeText(context, "🎤 Speak now...", Toast.LENGTH_LONG).show()
+            launcher.launch(intent)
+            android.util.Log.d("MapScreen", "Speech recognizer launched successfully")
+        } else {
+            // No speech recognizer found - show helpful message
+            android.util.Log.e("MapScreen", "No speech recognizer activity found")
+            Toast.makeText(
+                context,
+                "Speech recognition not available. Please install Google app.",
+                Toast.LENGTH_LONG
+            ).show()
+            vm.stopVoiceListening()
+        }
+    } catch (e: android.content.ActivityNotFoundException) {
+        android.util.Log.e("MapScreen", "Speech recognizer activity not found: ${e.message}", e)
+        Toast.makeText(
+            context,
+            "Voice input not available. Please install Google app.",
+            Toast.LENGTH_LONG
+        ).show()
+        vm.stopVoiceListening()
+    } catch (e: Exception) {
+        android.util.Log.e("MapScreen", "Failed to launch speech recognizer: ${e.message}", e)
+        Toast.makeText(context, "Voice input error: ${e.message}", Toast.LENGTH_SHORT).show()
+        vm.stopVoiceListening()
     }
 }
 

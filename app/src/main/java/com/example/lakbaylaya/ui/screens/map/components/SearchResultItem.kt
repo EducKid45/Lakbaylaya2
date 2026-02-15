@@ -23,6 +23,7 @@ import com.example.lakbaylaya.utils.DistanceUtils
  * Displays a single search result with:
  * - Category-specific icon on the left
  * - Place name, address, and distance
+ * - Marker edit button for repositioning pin
  * - Navigate action button aligned to the corner
  * - Clean separators and consistent spacing
  * - Material ripple effect
@@ -32,6 +33,7 @@ import com.example.lakbaylaya.utils.DistanceUtils
  * @param result The search result to display
  * @param onClick Callback when item is clicked
  * @param onNavigateClick Callback when navigate button is clicked
+ * @param onMarkerEditClick Callback when marker edit button is clicked (for repositioning pin)
  * @param modifier Modifier for customization
  */
 @Composable
@@ -39,6 +41,7 @@ fun SearchResultItem(
     result: SearchResult,
     onClick: () -> Unit,
     onNavigateClick: () -> Unit,
+    onMarkerEditClick: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val formattedDistance = DistanceUtils.formatDistance(result.distanceMeters)
@@ -99,6 +102,24 @@ fun SearchResultItem(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+
+            // Marker edit button (if callback provided)
+            if (onMarkerEditClick != null) {
+                IconButton(
+                    onClick = onMarkerEditClick,
+                    modifier = Modifier
+                        .size(48.dp)
+                        .semantics {
+                            contentDescription = "Adjust pin position for ${result.placeName}"
+                        }
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.EditLocationAlt,
+                        contentDescription = "Edit marker position",
+                        tint = MaterialTheme.colorScheme.secondary
                     )
                 }
             }

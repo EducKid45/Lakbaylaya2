@@ -3,9 +3,11 @@ package com.example.lakbaylaya.ui.screens.route.components
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -656,6 +658,210 @@ fun MemoryInfoRow(
             )
             Spacer(modifier = Modifier.width(4.dp))
             Text(actionText, fontSize = 14.sp)
+        }
+    }
+}
+
+/**
+ * Place item card showing saved place information
+ */
+@Composable
+fun PlaceItem(
+    place: com.example.lakbaylaya.ui.screens.route.SavedPlace,
+    onDelete: () -> Unit
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .semantics {
+                contentDescription = "Saved place: ${place.placeName}, labeled as ${place.label}"
+            },
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = Color.White
+        ),
+        elevation = CardDefaults.cardElevation(
+            defaultElevation = 2.dp
+        )
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            // Place icon with label badge
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                modifier = Modifier.width(60.dp)
+            ) {
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = Color(0xFF1976D2).copy(alpha = 0.1f),
+                    modifier = Modifier.size(48.dp)
+                ) {
+                    Box(
+                        contentAlignment = Alignment.Center,
+                        modifier = Modifier.fillMaxSize()
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Place,
+                            contentDescription = null,
+                            tint = Color(0xFF1976D2),
+                            modifier = Modifier.size(28.dp)
+                        )
+                    }
+                }
+                Spacer(modifier = Modifier.height(4.dp))
+                Surface(
+                    shape = RoundedCornerShape(4.dp),
+                    color = Color(0xFF1976D2)
+                ) {
+                    Text(
+                        text = place.label,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = Color.White,
+                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                        maxLines = 1
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.width(16.dp))
+
+            // Place details
+            Column(
+                modifier = Modifier.weight(1f)
+            ) {
+                Text(
+                    text = place.placeName,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = Color(0xFF1A1A1A)
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = place.address,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = Color(0xFF666666),
+                    maxLines = 2
+                )
+                if (place.category.isNotEmpty()) {
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = place.category,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Color(0xFF999999)
+                    )
+                }
+            }
+
+            // Delete button
+            IconButton(
+                onClick = onDelete,
+                modifier = Modifier.semantics {
+                    contentDescription = "Delete place ${place.placeName}"
+                }
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Delete,
+                    contentDescription = null,
+                    tint = Color(0xFFE53935)
+                )
+            }
+        }
+    }
+}
+
+/**
+ * Marker item card showing custom marker information
+ */
+@Composable
+fun MarkerItem(
+    marker: com.example.lakbaylaya.ui.screens.route.CustomMarker,
+    onDelete: () -> Unit
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .semantics {
+                contentDescription = "Custom marker: ${marker.label}"
+            },
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = Color.White
+        ),
+        elevation = CardDefaults.cardElevation(
+            defaultElevation = 2.dp
+        )
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            // Marker icon
+            Surface(
+                shape = RoundedCornerShape(12.dp),
+                color = Color(0xFFFF6F00).copy(alpha = 0.1f),
+                modifier = Modifier.size(48.dp)
+            ) {
+                Box(
+                    contentAlignment = Alignment.Center,
+                    modifier = Modifier.fillMaxSize()
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Place,
+                        contentDescription = null,
+                        tint = Color(0xFFFF6F00),
+                        modifier = Modifier.size(28.dp)
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.width(16.dp))
+
+            // Marker details
+            Column(
+                modifier = Modifier.weight(1f)
+            ) {
+                Text(
+                    text = marker.label,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = Color(0xFF1A1A1A)
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                if (marker.description.isNotEmpty()) {
+                    Text(
+                        text = marker.description,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = Color(0xFF666666),
+                        maxLines = 2
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                }
+                Text(
+                    text = "Lat: %.5f, Lng: %.5f".format(marker.latitude, marker.longitude),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Color(0xFF999999)
+                )
+            }
+
+            // Delete button
+            IconButton(
+                onClick = onDelete,
+                modifier = Modifier.semantics {
+                    contentDescription = "Delete marker ${marker.label}"
+                }
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Delete,
+                    contentDescription = null,
+                    tint = Color(0xFFE53935)
+                )
+            }
         }
     }
 }

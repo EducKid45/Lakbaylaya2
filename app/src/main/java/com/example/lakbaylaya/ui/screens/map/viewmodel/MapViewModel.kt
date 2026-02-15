@@ -67,6 +67,9 @@ class MapViewModel(
     // Public immutable state
     val state: StateFlow<MapState> = _state.asStateFlow()
 
+    // MapLibre manager reference (set by MapScreen after initialization)
+    var mapManager: com.example.lakbaylaya.maplibre.manager.MapLibreManager? = null
+
     // Debouncer for search input (300ms delay)
     // Search manager handles debounced searching and result transforms
     private val searchManager = MapSearchManager(
@@ -121,6 +124,33 @@ class MapViewModel(
      */
     fun onSearchQueryChange(query: String) {
         searchManager.onSearchQueryChange(query)
+    }
+
+    /** Voice recognition integration - update listening flag and accept voice transcripts */
+    fun startVoiceListening() {
+        _state.update { it.copy(isVoiceListening = true, isSearchOverlayActive = true) }
+    }
+
+    fun stopVoiceListening() {
+        _state.update { it.copy(isVoiceListening = false) }
+    }
+
+    /** Called when voice recognizer returns text. If final, we set the search query and trigger search flow. */
+    fun onVoiceResult(text: String, isFinal: Boolean) {
+        if (isFinal) {
+            // Set the search query and trigger search immediately
+            _state.update { it.copy(searchQuery = text, isVoiceListening = false) }
+            // Trigger search manager directly so it doesn't wait for debounce when voice provides final result
+            searchManager.onSearchQueryChange(text)
+        } else {
+            // Update query shown in UI but don't trigger debounced search for partials
+            _state.update {
+                it.copy(
+                    searchQuery = text,
+                    searchUiState = SearchUiState.Typing(text)
+                )
+            }
+        }
     }
 
     /**
@@ -178,6 +208,208 @@ class MapViewModel(
                 searchQuery = result.address, // Auto-fill search bar with address
                 searchUiState = SearchUiState.Idle,
                 bottomSheetState = BottomSheetState.Initial(result)
+            )
+        }
+    }
+
+    /**
+     * Opens marker editor overlay to reposition pin for a search result
+     * Closes search overlay and shows marker editor with centered pin
+     * Clears the selected marker so search icon disappears during editing
+     */
+    fun onSearchResultMarkerEdit(result: SearchResult) {
+        _state.update {
+            it.copy(
+                isSearchOverlayActive = false, // Close search overlay
+                isMarkerEditing = true, // Open marker editor
+                markerEditingResult = result, // Store result being edited
+                searchUiState = SearchUiState.Idle,
+                selectedMarker = null, // Clear marker icon during editing
+                bottomSheetState = BottomSheetState.Hidden // Hide bottom sheet during editing
+            )
+        }
+
+        // Move map camera to the search result location
+        viewModelScope.launch {
+            mapManager?.animateTo(
+                latitude = result.latitude,
+                longitude = result.longitude,
+                zoom = 17.0
+            )
+        }
+    }
+
+    /**
+     * Opens marker editor for a stop in direction mode
+     * Allows repositioning stop locations from search results
+     */
+    fun onEditStopLocation(stopIndex: Int) {
+        val directionData = _state.value.directionData ?: return
+        if (stopIndex !in directionData.stops.indices) return
+
+        val stop = directionData.stops[stopIndex]
+
+        // Create a SearchResult from the stop for editing
+        val stopAsResult = SearchResult(
+            id = "stop_$stopIndex",
+            placeName = stop.name,
+            address = stop.address,
+            latitude = stop.latitude,
+            longitude = stop.longitude,
+            category = "",
+            iconType = com.example.lakbaylaya.ui.screens.map.models.PlaceIconType.LOCATION,
+            distanceMeters = 0.0
+        )
+
+        _state.update {
+            it.copy(
+                isSearchOverlayActive = false,
+                isMarkerEditing = true,
+                markerEditingResult = stopAsResult,
+                selectedMarker = null,
+                bottomSheetState = BottomSheetState.Hidden,
+                // Store metadata about which stop is being edited
+                editingStopIndex = stopIndex
+            )
+        }
+
+        // Move camera to stop location
+        viewModelScope.launch {
+            mapManager?.animateTo(
+                latitude = stop.latitude,
+                longitude = stop.longitude,
+                zoom = 17.0
+            )
+        }
+    }
+
+    /**
+     * Handles when user confirms new marker position after editing
+     * Updates the result with new coordinates and refreshes Place Bottom Sheet
+     * Also handles updating stops in Direction mode
+     */
+    fun onMarkerEditConfirmed(latitude: Double, longitude: Double, address: String) {
+        val editingResult = _state.value.markerEditingResult ?: return
+        val editingStopIndex = _state.value.editingStopIndex
+
+        // Check if we're editing a stop in direction mode
+        if (editingStopIndex != null) {
+            onStopEditConfirmed(editingStopIndex, latitude, longitude, address)
+            return
+        }
+
+        // Create updated search result with new coordinates
+        val updatedResult = editingResult.copy(
+            latitude = latitude,
+            longitude = longitude,
+            address = address
+        )
+
+        // Add updated result to recent searches
+        val updatedRecent = searchManager.addToRecentSearches(updatedResult)
+
+        // Close marker editor and show place bottom sheet with updated location
+        _state.update {
+            it.copy(
+                isMarkerEditing = false,
+                markerEditingResult = null,
+                selectedResult = updatedResult,
+                selectedMarker = updatedResult, // Show marker at new position
+                bottomSheetState = BottomSheetState.Initial(updatedResult), // Refresh bottom sheet with new data
+                recentSearches = updatedRecent // Update recent searches
+            )
+        }
+    }
+
+    /**
+     * Handles confirming edited stop location
+     * Updates the stop coordinates and recalculates the route
+     */
+    private fun onStopEditConfirmed(
+        stopIndex: Int,
+        latitude: Double,
+        longitude: Double,
+        address: String
+    ) {
+        val currentData = _state.value.directionData ?: return
+        if (stopIndex !in currentData.stops.indices) return
+
+        val oldStop = currentData.stops[stopIndex]
+        val updatedStop = oldStop.copy(
+            latitude = latitude,
+            longitude = longitude,
+            address = address
+        )
+
+        val newStops = currentData.stops.toMutableList()
+        newStops[stopIndex] = updatedStop
+
+        val updatedData = currentData.copy(stops = newStops)
+
+        // Close editor and show loading state
+        _state.update {
+            it.copy(
+                isMarkerEditing = false,
+                markerEditingResult = null,
+                editingStopIndex = null,
+                directionData = updatedData.copy(routes = emptyList()),
+                polylines = emptyList(),
+                bottomSheetState = BottomSheetState.DirectionInitial(updatedData)
+            )
+        }
+
+        // Recalculate route with updated stop
+        viewModelScope.launch {
+            val result = repository.calculateRouteWithStops(
+                updatedData.origin,
+                updatedData.destination,
+                updatedData.stops,
+                mode = "walk"
+            )
+            result.onSuccess { routes ->
+                val finalData = updatedData.copy(routes = routes, selectedRouteIndex = 0)
+                val newPolylines = routes.map { route ->
+                    PolylineData(
+                        routeId = route.id,
+                        coordinates = route.polylineCoordinates,
+                        isPrimary = route.isPrimary
+                    )
+                }
+                _state.update {
+                    it.copy(
+                        directionData = finalData,
+                        polylines = newPolylines,
+                        bottomSheetState = BottomSheetState.DirectionInitial(finalData)
+                    )
+                }
+            }.onFailure { error ->
+                android.util.Log.e(
+                    "MapViewModel",
+                    "Failed to recalculate route after editing stop: ${error.message}",
+                    error
+                )
+                _state.update {
+                    it.copy(
+                        bottomSheetState = BottomSheetState.DirectionInitial(updatedData),
+                        searchUiState = SearchUiState.Error(
+                            query = "",
+                            message = "Failed to recalculate route."
+                        )
+                    )
+                }
+            }
+        }
+    }
+
+    /**
+     * Handles when user cancels marker editing
+     */
+    fun onMarkerEditCancelled() {
+        _state.update {
+            it.copy(
+                isMarkerEditing = false,
+                markerEditingResult = null,
+                editingStopIndex = null // Clear editing stop index on cancel
             )
         }
     }
