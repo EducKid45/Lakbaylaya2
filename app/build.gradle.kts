@@ -68,6 +68,9 @@ dependencies {
     // Gson for JSON parsing
     implementation("com.google.code.gson:gson:2.10.1")
 
+    // Kotlin Serialization for JSON handling (voice notes mapping)
+    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.2")
+
     // Google Play Services for GPS location
     implementation(libs.play.services.location)
 
