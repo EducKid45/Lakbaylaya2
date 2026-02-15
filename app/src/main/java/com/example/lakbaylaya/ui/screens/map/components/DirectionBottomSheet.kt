@@ -42,7 +42,7 @@ import com.example.lakbaylaya.ui.screens.map.models.BottomSheetState
 import com.example.lakbaylaya.ui.screens.map.models.DirectionStep
 import com.example.lakbaylaya.ui.screens.map.models.DirectionData
 import com.example.lakbaylaya.ui.screens.map.models.RouteOption
-import com.example.lakbaylaya.ui.screens.map.utils.DirectionIconMapper
+import com.example.lakbaylaya.utils.DirectionIconMapper
 import kotlinx.coroutines.launch
 import kotlin.math.abs
 

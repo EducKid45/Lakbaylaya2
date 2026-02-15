@@ -36,7 +36,8 @@ data class MapState(
     val directionData: DirectionData? = null,
     val polylines: List<PolylineData> = emptyList(),
     val isOverlayPanelExpanded: Boolean = false,
-    val navigationState: NavigationState = NavigationState.Inactive
+    val navigationState: NavigationState = NavigationState.Inactive,
+    val pendingVoiceNotesPlace: SearchResult? = null
 )
 
 /**

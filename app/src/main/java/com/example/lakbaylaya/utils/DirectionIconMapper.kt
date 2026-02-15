@@ -1,4 +1,4 @@
-package com.example.lakbaylaya.ui.screens.map.utils
+package com.example.lakbaylaya.utils
 
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.*

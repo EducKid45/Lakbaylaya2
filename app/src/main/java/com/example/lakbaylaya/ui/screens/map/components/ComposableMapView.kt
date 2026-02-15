@@ -1,4 +1,4 @@
-package com.example.lakbaylaya.maplibre
+package com.example.lakbaylaya.ui.screens.map.components
 
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier

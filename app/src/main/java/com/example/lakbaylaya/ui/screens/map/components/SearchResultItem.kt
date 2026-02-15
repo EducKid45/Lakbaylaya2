@@ -15,7 +15,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.example.lakbaylaya.ui.screens.map.models.PlaceIconType
 import com.example.lakbaylaya.ui.screens.map.models.SearchResult
-import com.example.lakbaylaya.ui.screens.map.utils.DistanceUtils
+import com.example.lakbaylaya.utils.DistanceUtils
 
 /**
  * Search result item component with enhanced design
@@ -48,7 +48,8 @@ fun SearchResultItem(
         modifier = modifier
             .fillMaxWidth()
             .semantics {
-                contentDescription = "${result.placeName}, ${result.address}, $accessibilityDescription"
+                contentDescription =
+                    "${result.placeName}, ${result.address}, $accessibilityDescription"
             },
         color = MaterialTheme.colorScheme.surface
     ) {

@@ -12,7 +12,7 @@ import androidx.compose.ui.zIndex
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.lakbaylaya.ui.screens.map.components.*
-import com.example.lakbaylaya.ui.screens.map.maplibre.config.MapStyleConfig
+import com.example.lakbaylaya.maplibre.config.MapStyleConfig
 import com.example.lakbaylaya.ui.screens.map.models.BottomSheetState
 import com.example.lakbaylaya.ui.screens.map.models.UiMode
 import com.example.lakbaylaya.ui.screens.map.models.NavigationState
@@ -23,7 +23,8 @@ import com.example.lakbaylaya.ui.screens.map.navigation.tts.AndroidTextToSpeechE
 import com.example.lakbaylaya.ui.screens.map.navigation.pedometer.AndroidStepDetector
 import com.example.lakbaylaya.ui.screens.map.viewmodel.MapViewModel
 import com.example.lakbaylaya.ui.screens.map.viewmodel.MapViewModelFactory
-import com.example.lakbaylaya.ui.screens.map.utils.rememberLocationPermissionState
+import com.example.lakbaylaya.utils.rememberLocationPermissionState
+import com.example.lakbaylaya.data.model.VoiceNote
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.material3.AlertDialog
@@ -32,6 +33,12 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import com.example.lakbaylaya.ui.screens.map.components.MapLibreView
+import com.example.lakbaylaya.maplibre.manager.MapLibreManager
 import com.example.lakbaylaya.ui.screens.map.models.ManeuverType
 import com.example.lakbaylaya.ui.screens.map.models.DirectionStep
 
@@ -120,26 +127,69 @@ fun MapScreen(
      * Callback to control bottom navigation bar visibility
      * Should hide bottom nav when search is active
      */
-    onBottomNavVisibilityChange: ((Boolean) -> Unit)? = null
+    onBottomNavVisibilityChange: ((Boolean) -> Unit)? = null,
+    /**
+     * Callback to navigate to Voice Notes screen with location and place data
+     */
+    onNavigateToVoiceNotes: ((Double, Double, String?) -> Unit)? = null
 ) {
     val context = LocalContext.current
 
     // Create ViewModel with Application context using custom factory
-    val viewModel: MapViewModel = viewModel(
+    val vm: MapViewModel = viewModel(
         factory = MapViewModelFactory(
             context.applicationContext as android.app.Application
         )
     )
 
-    val state by viewModel.state.collectAsState()
+    val state by vm.state.collectAsState()
     val isDarkTheme = isSystemInDarkTheme()
 
     // Create and remember MapLibreManager (explicit type ensures methods are resolved)
-    val mapManager: com.example.lakbaylaya.ui.screens.map.maplibre.MapLibreManager = remember { com.example.lakbaylaya.ui.screens.map.maplibre.MapLibreManager(context) }
+    val mapManager: MapLibreManager = remember { MapLibreManager(context) }
     var isMapReady by remember { mutableStateOf(false) }
 
     // Center-on-location toggle state (used by FAB and location updates)
     var isCenterOnLocation by remember { mutableStateOf(false) }
+
+    // Marker action dialog state - managed at top level for z-index ordering
+    var showMarkerDialog by remember { mutableStateOf(false) }
+    var selectedPlaceForMarker by remember {
+        mutableStateOf<com.example.lakbaylaya.ui.screens.map.models.SearchResult?>(
+            null
+        )
+    }
+    val focusManager = LocalFocusManager.current
+    val keyboardController = LocalSoftwareKeyboardController.current
+    val composeScope = rememberCoroutineScope()
+
+    // Helper to open the marker dialog safely: close/hide search UI first, then wait for it to hide
+    fun openMarkerDialogSafely(place: com.example.lakbaylaya.ui.screens.map.models.SearchResult?) {
+        // Request closing of search overlay and clear focus/keyboard
+        vm.onBackClick()
+        focusManager.clearFocus(force = true)
+        keyboardController?.hide()
+
+        composeScope.launch {
+            // Wait up to 1 second for the search overlay to actually close to avoid races
+            var waited = 0
+            while (state.isSearchOverlayActive && waited < 1000) {
+                delay(50)
+                waited += 50
+            }
+            showMarkerDialog = true
+            selectedPlaceForMarker = place
+        }
+    }
+
+    // When marker dialog opens, clear focus to dismiss keyboard/search focus which may render UI above the dialog
+    LaunchedEffect(showMarkerDialog) {
+        if (showMarkerDialog) {
+            focusManager.clearFocus(force = true)
+            // Also ensure the search overlay is closed so no search UI remains above the dialog
+            vm.onBackClick()
+        }
+    }
 
     // Initialize TTS and Step Detector for navigation
     val ttsEngine = remember { AndroidTextToSpeechEngine(context) }
@@ -181,7 +231,7 @@ fun MapScreen(
                 locationTracker.startTracking(
                     onLocationUpdate = { location ->
                         // Update navigation with GPS location for step threshold detection
-                        viewModel.updateNavigationLocation(location)
+                        vm.updateNavigationLocation(location)
 
                         // Also update map camera to follow user only when center-on-location is enabled
                         if (isCenterOnLocation) {
@@ -199,7 +249,7 @@ fun MapScreen(
                 stepDetector.reset()
                 stepDetector.start(
                     onStepDetected = { stepCount ->
-                        viewModel.updateNavigationStepCount(stepCount)
+                        vm.updateNavigationStepCount(stepCount)
                     },
                     onDistanceUpdated = { _ ->
                         // GPS is primary for navigation, step detector is for UI stats only
@@ -256,7 +306,7 @@ fun MapScreen(
 
     // Update permission state in ViewModel
     LaunchedEffect(locationPermission.hasPermission) {
-        viewModel.onLocationPermissionChanged(locationPermission.hasPermission)
+        vm.onLocationPermissionChanged(locationPermission.hasPermission)
     }
 
     // Control bottom navigation visibility based on search state
@@ -268,6 +318,50 @@ fun MapScreen(
     LaunchedEffect(Unit) {
         if (!locationPermission.hasPermission) {
             showPermissionDialog = true
+        }
+    }
+
+    // Handle Voice Notes navigation
+    LaunchedEffect(state.pendingVoiceNotesPlace) {
+        state.pendingVoiceNotesPlace?.let { place ->
+            onNavigateToVoiceNotes?.invoke(
+                place.latitude,
+                place.longitude,
+                place.placeName
+            )
+            vm.clearPendingVoiceNotesPlace()
+        }
+    }
+
+    // Load and display voice notes markers on map
+    var voiceNotes by remember { mutableStateOf<List<VoiceNote>>(emptyList()) }
+    var refreshVoiceNotes by remember { mutableStateOf(0) } // Trigger refresh counter
+
+
+    LaunchedEffect(isMapReady, refreshVoiceNotes) {
+        if (isMapReady) {
+
+            // Clear existing markers before adding new ones
+            mapManager.clearMarkers()
+
+            // Display voice note markers on map
+            voiceNotes.forEach { note ->
+                mapManager.addMarker(
+                    latitude = note.latitude,
+                    longitude = note.longitude,
+                    title = "Voice Note: ${note.id}"
+                )
+            }
+
+            android.util.Log.d("MapScreen", "Loaded ${voiceNotes.size} voice note markers")
+        }
+    }
+
+    // Refresh voice notes when returning from Voice Notes screen
+    LaunchedEffect(state.pendingVoiceNotesPlace) {
+        if (state.pendingVoiceNotesPlace == null && voiceNotes.isNotEmpty()) {
+            // User might have created a new note, refresh the list
+            refreshVoiceNotes++
         }
     }
 
@@ -404,7 +498,6 @@ fun MapScreen(
                 val lrPx = with(density) { leftRightDp.toPx().toInt() }
                 val bPx = with(density) { bottomDp.toPx().toInt() }
 
-                mapManager.setCompassMargins(lrPx, topPx, lrPx, bPx)
             } catch (e: Exception) {
                 android.util.Log.e("MapScreen", "Failed to set compass margins: ${e.message}")
             }
@@ -443,7 +536,7 @@ fun MapScreen(
         )
 
         // Search overlay - only visible when search is active AND NOT in Direction Mode (or editing stops)
-        if (state.isSearchOverlayActive) {
+        if (state.isSearchOverlayActive && !showMarkerDialog) {
             Column(
                 modifier = Modifier
                     .fillMaxSize()
@@ -455,28 +548,30 @@ fun MapScreen(
                     query = state.searchQuery,
                     isOverlayActive = state.isSearchOverlayActive,
                     onQueryChange = { query ->
-                        viewModel.onSearchQueryChange(query)
+                        vm.onSearchQueryChange(query)
                     },
                     onSearchBarClick = {
-                        viewModel.onSearchBarClick()
+                        if (!showMarkerDialog) vm.onSearchBarClick()
                     },
                     onBackClick = {
                         if (isEditingStops) {
                             // If editing stops, go back to Direction Mode
-                            viewModel.onFinishEditingStops()
+                            vm.onFinishEditingStops()
                         } else {
-                            viewModel.onBackClick()
+                            vm.onBackClick()
                         }
                     },
                     onClearClick = {
-                        viewModel.onClearSearch()
+                        vm.onClearSearch()
                     },
                     onMicClick = {
                         // TODO: Implement voice search
-                        viewModel.onSearchBarClick()
+                        vm.onSearchBarClick()
                     },
                     modifier = Modifier
                         .fillMaxWidth()
+                        // Lower search bar z-index when place sheet is fully expanded so it stays behind
+                        .zIndex(if (state.bottomSheetState is BottomSheetState.Full) 0f else 3f)
                         .padding(top = topStatusBarPadding)
                 )
 
@@ -488,20 +583,20 @@ fun MapScreen(
                     onResultClick = { result ->
                         if (isEditingStops) {
                             // Add as stop
-                            viewModel.onAddStopFromSearch(result)
+                            vm.onAddStopFromSearch(result)
                         } else {
                             // Normal search result selection
-                            viewModel.onResultSelected(result)
+                            vm.onResultSelected(result)
                         }
                     },
                     onNavigateClick = { result ->
-                        viewModel.navigateToLocation(result)
+                        vm.navigateToLocation(result)
                     },
                     onDismiss = {
                         if (isEditingStops) {
-                            viewModel.onFinishEditingStops()
+                            vm.onFinishEditingStops()
                         } else {
-                            viewModel.onBackClick()
+                            vm.onBackClick()
                         }
                     },
                     modifier = Modifier
@@ -581,7 +676,7 @@ fun MapScreen(
                     isMuted = navigationState.isMuted,
                     isCentered = isCenterOnLocation,
                     onMuteToggle = {
-                        viewModel.toggleNavigationMute()
+                        vm.toggleNavigationMute()
                     },
                     onCenterToggle = {
                         // Toggle center-on-location mode
@@ -608,7 +703,7 @@ fun MapScreen(
                 NavigationBottomSheet(
                     navigationState = navigationState,
                     onClose = {
-                        viewModel.stopNavigation()
+                        vm.stopNavigation()
                     },
                     onRecenter = {
                         // Show full route
@@ -625,7 +720,7 @@ fun MapScreen(
                     },
                     onDone = {
                         // Finish navigation and return to normal mode
-                        viewModel.finishNavigation()
+                        vm.finishNavigation()
                     },
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
@@ -643,24 +738,28 @@ fun MapScreen(
                             directionData = currentDirectionData,
                             isEditingStops = isEditingStops,
                             onBack = {
-                                viewModel.onDirectionBack()
+                                vm.onDirectionBack()
                             },
                             onAddStop = {
-                                viewModel.onStartEditingStops()
+                                vm.onStartEditingStops()
                             },
                             onRemoveStop = { index ->
-                                viewModel.onRemoveStop(index)
+                                vm.onRemoveStop(index)
                             },
                             onSwapOriginDestination = {
-                                viewModel.onSwapOriginDestination()
+                                vm.onSwapOriginDestination()
                             },
-                            onSwapStops = { i, j -> viewModel.onSwapStops(i, j) },
-                            onSwapStopWithDestination = { index -> viewModel.onSwapStopWithDestination(index) },
+                            onSwapStops = { i, j -> vm.onSwapStops(i, j) },
+                            onSwapStopWithDestination = { index ->
+                                vm.onSwapStopWithDestination(
+                                    index
+                                )
+                            },
                             onDone = {
-                                viewModel.onFinishEditingStops()
+                                vm.onFinishEditingStops()
                             },
                             onExpandedChange = { isExpanded ->
-                                viewModel.onOverlayPanelExpandedChange(isExpanded)
+                                vm.onOverlayPanelExpandedChange(isExpanded)
                             },
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -671,52 +770,62 @@ fun MapScreen(
                     }
                 } else if (!isDirectionMode) {
                     // Normal Mode: Search bar at top
-                    FloatingSearchBar(
-                        query = state.searchQuery,
-                        isOverlayActive = state.isSearchOverlayActive,
-                        onQueryChange = { query ->
-                            viewModel.onSearchQueryChange(query)
-                        },
-                        onSearchBarClick = {
-                            viewModel.onSearchBarClick()
-                        },
-                        onBackClick = {
-                            viewModel.onBackClick()
-                        },
-                        onClearClick = {
-                            viewModel.onClearSearch()
-                        },
-                        onMicClick = {
-                            // TODO: Implement voice search
-                            viewModel.onSearchBarClick()
-                        },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .align(Alignment.TopCenter)
-                            .zIndex(3f)
-                            .padding(top = topStatusBarPadding)
-                    )
+                    if (!showMarkerDialog) {
+                        FloatingSearchBar(
+                            query = state.searchQuery,
+                            isOverlayActive = state.isSearchOverlayActive,
+                            onQueryChange = { query ->
+                                vm.onSearchQueryChange(query)
+                            },
+                            onSearchBarClick = {
+                                if (!showMarkerDialog) vm.onSearchBarClick()
+                            },
+                            onBackClick = {
+                                vm.onBackClick()
+                            },
+                            onClearClick = {
+                                vm.onClearSearch()
+                            },
+                            onMicClick = {
+                                // TODO: Implement voice search
+                                vm.onSearchBarClick()
+                            },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .align(Alignment.TopCenter)
+                                // Lower search bar z-index when place sheet is fully expanded so it stays behind
+                                .zIndex(if (state.bottomSheetState is BottomSheetState.Full) 0f else 3f)
+                                .padding(top = topStatusBarPadding)
+                        )
+                    } else {
+                        Spacer(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(56.dp)
+                                .padding(top = topStatusBarPadding)
+                        )
+                    }
                 }
 
-                // Bottom Sheets based on mode
+                // Bottom Sheets based on mode (render outside of the search bar branch)
                 if (isDirectionMode) {
                     // Direction Mode: Show Direction sheet (unless overlay panel is expanded)
                     if (!state.isOverlayPanelExpanded) {
                         DirectionBottomSheet(
                             sheetState = state.bottomSheetState,
                             onStateChange = { newState ->
-                                viewModel.onBottomSheetStateChange(newState)
+                                vm.onBottomSheetStateChange(newState)
                             },
                             onRouteSelected = { routeIndex ->
-                                viewModel.onRouteChange(routeIndex)
+                                vm.onRouteChange(routeIndex)
                             },
                             onAddStopsClick = {
-                                viewModel.onStartEditingStops()
+                                vm.onStartEditingStops()
                             },
                             // When the user presses Close(X) in the directions sheet, go back from direction mode
-                            onClose = { viewModel.onDirectionBack() },
+                            onClose = { vm.onDirectionBack() },
                             onStartNavigation = {
-                                viewModel.startNavigation()
+                                vm.startNavigation()
                             },
                             topInsetAdjustment = topInsetAdjustment,
                             modifier = Modifier
@@ -737,7 +846,7 @@ fun MapScreen(
                         reverseGeocodedLocation = state.reverseGeocodedLocation,
                         isExpanded = state.isUserLocationSheetExpanded,
                         onToggle = {
-                            viewModel.toggleUserLocationSheet()
+                            vm.toggleUserLocationSheet()
                         },
                         modifier = Modifier
                             .align(Alignment.BottomCenter)
@@ -753,27 +862,52 @@ fun MapScreen(
                         PlaceBottomSheet(
                             sheetState = state.bottomSheetState,
                             onStateChange = { newState ->
-                                viewModel.onBottomSheetStateChange(newState)
+                                vm.onBottomSheetStateChange(newState)
                             },
                             onActionClick = { action, place ->
-                                viewModel.onPlaceAction(action, place)
+                                vm.onPlaceAction(action, place)
                             },
                             onDismiss = {
-                                viewModel.dismissPlace()
+                                vm.dismissPlace()
                             },
+                            showMarkerDialog = showMarkerDialog,
+                            onShowMarkerDialog = { show, place ->
+                                if (show) {
+                                    openMarkerDialogSafely(place)
+                                } else {
+                                    showMarkerDialog = false
+                                    selectedPlaceForMarker = null
+                                }
+                            },
+
                             modifier = Modifier
                                 .align(Alignment.BottomCenter)
-                                .zIndex(
-                                    if (state.bottomSheetState is BottomSheetState.Full) {
-                                        4f
-                                    } else {
-                                        1f
-                                    }
-                                ),
+                                // If the place sheet is fully expanded, give it a higher z-index
+                                .zIndex(if (state.bottomSheetState is BottomSheetState.Full) 6f else 1f),
                             bottomNavigationHeight = 80.dp
                         )
                     }
                 }
+            }
+
+            // Marker action dialog - ALWAYS rendered last to ensure highest z-index
+            // This must be outside all conditional blocks to be on top of everything
+            if (showMarkerDialog && selectedPlaceForMarker != null) {
+                MarkerActionDialog(
+                    isVisible = showMarkerDialog,
+                    onDismiss = {
+                        showMarkerDialog = false
+                        selectedPlaceForMarker = null
+                    },
+                    onSaveNotes = { metadata ->
+                        // TODO: Save metadata to database or fire event
+                        showMarkerDialog = false
+                        selectedPlaceForMarker = null
+                    },
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .zIndex(100f) // ensure dialog is highest z-order
+                )
             }
         }
     }

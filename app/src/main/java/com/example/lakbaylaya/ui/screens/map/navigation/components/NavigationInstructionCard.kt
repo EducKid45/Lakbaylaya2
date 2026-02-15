@@ -14,7 +14,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.lakbaylaya.ui.screens.map.models.DirectionStep
-import com.example.lakbaylaya.ui.screens.map.utils.DirectionIconMapper
+import com.example.lakbaylaya.utils.DirectionIconMapper
 
 /**
  * Navigation instruction overlay card displayed at the top of the screen
@@ -47,7 +47,8 @@ fun NavigationInstructionCard(
                 shape = RoundedCornerShape(16.dp)
             )
             .semantics {
-                contentDescription = "Current instruction: ${step.instruction}. Tap to zoom and repeat instruction."
+                contentDescription =
+                    "Current instruction: ${step.instruction}. Tap to zoom and repeat instruction."
             },
         shape = RoundedCornerShape(16.dp),
         color = MaterialTheme.colorScheme.primaryContainer,

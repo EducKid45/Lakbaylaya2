@@ -32,13 +32,11 @@ import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.RecordVoiceOver
-import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Watch
 import androidx.compose.material.icons.filled.Work
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
@@ -67,8 +65,7 @@ import androidx.compose.foundation.layout.offset
 
 @Composable
 fun ProfileScreen(
-    viewModel: ProfileViewModel = viewModel(),
-    onNavigateToSettings: () -> Unit = {}
+    viewModel: ProfileViewModel = viewModel()
 ) {
     val uiState by viewModel.uiState.collectAsState()
 
@@ -117,20 +114,6 @@ fun ProfileScreen(
             item {
                 Spacer(modifier = Modifier.height(24.dp))
             }
-        }
-
-        // Small settings button pinned to top-right so NavGraph's onNavigateToSettings can be used.
-        IconButton(
-            onClick = onNavigateToSettings,
-            modifier = Modifier
-                .align(Alignment.TopEnd)
-                .padding(12.dp)
-        ) {
-            Icon(
-                imageVector = Icons.Default.Settings,
-                contentDescription = "Open settings",
-                tint = Color(0xFF424242)
-            )
         }
     }
 }

@@ -77,9 +77,8 @@ fun NavGraph(
 
         // Profile
         composable(NavRoutes.Profile.route) {
-            ProfileScreen(
-                onNavigateToSettings = { navController.navigate(NavRoutes.Settings.route) }
-            )
+            // `ProfileScreen` no longer takes an onNavigateToSettings parameter; call with the default signature.
+            ProfileScreen()
         }
 
         // Settings

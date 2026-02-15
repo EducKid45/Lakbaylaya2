@@ -65,12 +65,8 @@ sealed class BottomSheetState {
 enum class PlaceAction {
     START_NAVIGATION,
     DIRECTIONS,
-    EXPLORATION_MODE,
-    VOICE_NOTES,
     MARK_LOCATION,
     SAVE_PLACE,
     SHARE,
     CALL,
-    WEBSITE
 }
-

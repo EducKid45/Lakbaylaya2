@@ -1,4 +1,4 @@
-package com.example.lakbaylaya.ui.screens.map.utils
+package com.example.lakbaylaya.utils
 
 import com.example.lakbaylaya.ui.screens.map.models.PlaceIconType
 

@@ -1,4 +1,4 @@
-package com.example.lakbaylaya.ui.screens.map.utils
+package com.example.lakbaylaya.utils
 
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
