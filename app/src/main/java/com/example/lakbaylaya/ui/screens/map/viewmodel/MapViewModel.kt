@@ -216,12 +216,12 @@ class MapViewModel(
      */
     fun onPlaceAction(action: PlaceAction, place: SearchResult) {
         when (action) {
-            PlaceAction.START_NAVIGATION -> navigateToLocation(place)
+            PlaceAction.START_NAVIGATION -> showDirections(place, autoStart = true)
             PlaceAction.SAVE_PLACE -> savePlaceToFavorites(place)
             PlaceAction.MARK_LOCATION -> markLocation(place)
             PlaceAction.SHARE -> sharePlace(place)
             PlaceAction.CALL -> callPlace(place)
-            PlaceAction.DIRECTIONS -> showDirections(place)
+            PlaceAction.DIRECTIONS -> showDirections(place, autoStart = false)
         }
     }
 
@@ -296,7 +296,10 @@ class MapViewModel(
         // TODO: Implement opening browser
     }
 
-    private fun showDirections(place: SearchResult) {
+    /**
+     * Modified showDirections to accept autoStart parameter
+     */
+    private fun showDirections(place: SearchResult, autoStart: Boolean = false) {
         // Create direction data from current location to selected place
         val currentLoc = _state.value.currentLocation ?: return
 
@@ -356,6 +359,11 @@ class MapViewModel(
                         polylines = polylines,
                         bottomSheetState = BottomSheetState.DirectionInitial(directionData)
                     )
+                }
+
+                // If requested, start navigation immediately (uses same action as DirectionBottomSheet Start)
+                if (autoStart) {
+                    startNavigation()
                 }
             }.onFailure { error ->
                 // Handle error - keep sheet visible in loading/error state without mock
@@ -644,6 +652,20 @@ class MapViewModel(
     fun clearPendingVoiceNotesPlace() {
         _state.update {
             it.copy(pendingVoiceNotesPlace = null)
+        }
+    }
+
+    /**
+     * Test method to manually trigger arrival (for debugging arrival detection issues)
+     * This should immediately show "You have arrived!" and the Done button
+     */
+    fun testArrival() {
+        val navState = state.value.navigationState
+        if (navState is NavigationState.Active) {
+            android.util.Log.i("MapViewModel", "🧪 TEST: Manually triggering arrival for debugging")
+            navigationManager.testArrival()
+        } else {
+            android.util.Log.w("MapViewModel", "Cannot test arrival - navigation not active")
         }
     }
 }

@@ -46,6 +46,22 @@ android {
             )
         }
     }
+
+    // Add a flavor dimension and two flavors: play (default) and sideload (allows on-device SMS)
+    flavorDimensions += "mode"
+    productFlavors {
+        create("play") {
+            dimension = "mode"
+            // By default, do not enable on-device SMS
+            buildConfigField("boolean", "SIDELOAD_SMS", "false")
+        }
+        create("sideload") {
+            dimension = "mode"
+            // Enable on-device SMS for sideload builds
+            buildConfigField("boolean", "SIDELOAD_SMS", "true")
+        }
+    }
+
     buildFeatures {
         compose = true
         // Enable BuildConfig so buildConfigField in defaultConfig is generated

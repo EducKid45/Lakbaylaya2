@@ -12,21 +12,13 @@ import kotlinx.coroutines.flow.asStateFlow
 data class VoiceAudioSettings(
     val voiceGuidanceEnabled: Boolean = true,
     val voiceSpeed: VoiceSpeed = VoiceSpeed.NORMAL,
-    val voiceVolume: Int = 80, // 0-100
-    val selectedLanguage: Language = Language.ENGLISH
+    val voiceVolume: Int = 80 // 0-100
 )
 
 enum class VoiceSpeed(val displayName: String, val multiplier: Float) {
     SLOW("Slow", 0.75f),
     NORMAL("Normal", 1.0f),
     FAST("Fast", 1.25f)
-}
-
-enum class Language(val displayName: String, val code: String) {
-    ENGLISH("English", "en"),
-    FILIPINO("Filipino", "fil"),
-    TAGALOG("Tagalog", "tl"),
-    CEBUANO("Cebuano", "ceb")
 }
 
 // ============================================
@@ -36,8 +28,10 @@ enum class Language(val displayName: String, val code: String) {
 data class VibrationSettings(
     val vibrationEnabled: Boolean = true,
     val vibrationStrength: VibrationStrength = VibrationStrength.MEDIUM,
-    val normalPathPattern: VibrationPattern = VibrationPattern.SHORT_PULSE,
-    val difficultPathPattern: VibrationPattern = VibrationPattern.DOUBLE_PULSE,
+    val leftPattern: VibrationPattern = VibrationPattern.DOUBLE_PULSE,
+    val rightPattern: VibrationPattern = VibrationPattern.DOUBLE_PULSE,
+    val forwardPattern: VibrationPattern = VibrationPattern.SHORT_PULSE,
+    val backwardPattern: VibrationPattern = VibrationPattern.SHORT_PULSE,
     val arrivalPattern: VibrationPattern = VibrationPattern.LONG_VIBRATION
 )
 
@@ -52,16 +46,16 @@ enum class VibrationPattern(val displayName: String, val description: String) {
     SHORT_PULSE("Short Pulse", "Quick single vibration"),
     DOUBLE_PULSE("Double Pulse", "Two quick vibrations"),
     LONG_VIBRATION("Long Vibration", "Extended vibration"),
-    PATTERN_WAVE("Wave Pattern", "Increasing then decreasing"),
+    WAVE("Wave", "Increasing then decreasing"),
     RAPID_PULSES("Rapid Pulses", "Multiple quick vibrations")
 }
 
 // ============================================
-// Navigation Preferences
+// Navigation Preferences (removed content - kept model minimal)
 // ============================================
 
 data class NavigationPreferences(
-    val defaultWalkingMode: Boolean = true,
+    val defaultWalkingMode: Boolean = false,
     val autoCameraOrientation: Boolean = true,
     val autoReroute: Boolean = true,
     val routePreviewEnabled: Boolean = true
@@ -85,7 +79,7 @@ data class SafetySettings(
 )
 
 // ============================================
-// Device & Connectivity Settings
+// Device & Connectivity Settings (removed UI but keep model minimal)
 // ============================================
 
 data class DeviceSettings(
@@ -149,18 +143,19 @@ class SettingsViewModel : ViewModel() {
             voiceAudioSettings = VoiceAudioSettings(
                 voiceGuidanceEnabled = true,
                 voiceSpeed = VoiceSpeed.NORMAL,
-                voiceVolume = 80,
-                selectedLanguage = Language.ENGLISH
+                voiceVolume = 80
             ),
             vibrationSettings = VibrationSettings(
                 vibrationEnabled = true,
                 vibrationStrength = VibrationStrength.MEDIUM,
-                normalPathPattern = VibrationPattern.SHORT_PULSE,
-                difficultPathPattern = VibrationPattern.DOUBLE_PULSE,
+                leftPattern = VibrationPattern.DOUBLE_PULSE,
+                rightPattern = VibrationPattern.DOUBLE_PULSE,
+                forwardPattern = VibrationPattern.SHORT_PULSE,
+                backwardPattern = VibrationPattern.SHORT_PULSE,
                 arrivalPattern = VibrationPattern.LONG_VIBRATION
             ),
             navigationPreferences = NavigationPreferences(
-                defaultWalkingMode = true,
+                defaultWalkingMode = false,
                 autoCameraOrientation = true,
                 autoReroute = true,
                 routePreviewEnabled = true
@@ -178,9 +173,9 @@ class SettingsViewModel : ViewModel() {
                 autoSendArrivalNotification = true
             ),
             deviceSettings = DeviceSettings(
-                pairedDeviceName = "LakbayLaya Band",
-                isDeviceConnected = true,
-                deviceBatteryLevel = 75
+                pairedDeviceName = "",
+                isDeviceConnected = false,
+                deviceBatteryLevel = null
             ),
             appDataSettings = AppDataSettings(
                 routeHistoryCount = 24,
@@ -217,13 +212,6 @@ class SettingsViewModel : ViewModel() {
         )
     }
 
-    fun setLanguage(language: Language) {
-        _uiState.value = _uiState.value.copy(
-            voiceAudioSettings = _uiState.value.voiceAudioSettings.copy(selectedLanguage = language),
-            feedbackMessage = "Language set to ${language.displayName}"
-        )
-    }
-
     // ============================================
     // Vibration Settings Actions
     // ============================================
@@ -243,17 +231,31 @@ class SettingsViewModel : ViewModel() {
         )
     }
 
-    fun setNormalPathPattern(pattern: VibrationPattern) {
+    fun setLeftPattern(pattern: VibrationPattern) {
         _uiState.value = _uiState.value.copy(
-            vibrationSettings = _uiState.value.vibrationSettings.copy(normalPathPattern = pattern),
-            feedbackMessage = "Normal path vibration set to ${pattern.displayName}"
+            vibrationSettings = _uiState.value.vibrationSettings.copy(leftPattern = pattern),
+            feedbackMessage = "Left vibration set to ${pattern.displayName}"
         )
     }
 
-    fun setDifficultPathPattern(pattern: VibrationPattern) {
+    fun setRightPattern(pattern: VibrationPattern) {
         _uiState.value = _uiState.value.copy(
-            vibrationSettings = _uiState.value.vibrationSettings.copy(difficultPathPattern = pattern),
-            feedbackMessage = "Difficult path vibration set to ${pattern.displayName}"
+            vibrationSettings = _uiState.value.vibrationSettings.copy(rightPattern = pattern),
+            feedbackMessage = "Right vibration set to ${pattern.displayName}"
+        )
+    }
+
+    fun setForwardPattern(pattern: VibrationPattern) {
+        _uiState.value = _uiState.value.copy(
+            vibrationSettings = _uiState.value.vibrationSettings.copy(forwardPattern = pattern),
+            feedbackMessage = "Forward vibration set to ${pattern.displayName}"
+        )
+    }
+
+    fun setBackwardPattern(pattern: VibrationPattern) {
+        _uiState.value = _uiState.value.copy(
+            vibrationSettings = _uiState.value.vibrationSettings.copy(backwardPattern = pattern),
+            feedbackMessage = "Backward vibration set to ${pattern.displayName}"
         )
     }
 

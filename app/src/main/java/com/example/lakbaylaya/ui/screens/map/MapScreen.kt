@@ -41,6 +41,11 @@ import com.example.lakbaylaya.ui.screens.map.components.MapLibreView
 import com.example.lakbaylaya.maplibre.manager.MapLibreManager
 import com.example.lakbaylaya.ui.screens.map.models.ManeuverType
 import com.example.lakbaylaya.ui.screens.map.models.DirectionStep
+import com.example.lakbaylaya.ui.screens.map.models.MarkerMetadata
+import com.example.lakbaylaya.data.repository.MapRepositoryImpl
+import com.example.lakbaylaya.data.api.GeoapifyApiImpl
+import kotlinx.coroutines.CompletableDeferred
+import android.location.Location as AndroidLocation
 
 /**
  * Map Screen - Main composable for the map feature with modern UI/UX
@@ -151,6 +156,8 @@ fun MapScreen(
 
     val state by vm.state.collectAsState()
 
+    // (No initial metadata) Marker dialog is opened using the selected place only
+
     // Create and remember MapLibreManager (explicit type ensures methods are resolved)
     val mapManager: MapLibreManager = remember { MapLibreManager(context) }
     var isMapReady by remember { mutableStateOf(false) }
@@ -162,6 +169,12 @@ fun MapScreen(
     var showMarkerDialog by remember { mutableStateOf(false) }
     var selectedPlaceForMarker by remember {
         mutableStateOf<com.example.lakbaylaya.ui.screens.map.models.SearchResult?>(
+            null
+        )
+    }
+    // Initial metadata used to pre-fill the MarkerActionDialog when marking current location or a place
+    var initialMarkerMetadata by remember {
+        mutableStateOf<com.example.lakbaylaya.ui.screens.map.models.MarkerMetadata?>(
             null
         )
     }
@@ -614,11 +627,12 @@ fun MapScreen(
                     NavigationInstructionCard(
                         step = arrivalStep,
                         onClick = {
-                            // No-op or repeat TTS for arrival
+                            // Repeat TTS for arrival
                             if (!navigationState.isMuted) {
                                 ttsEngine.speak(arrivalStep.instruction, priority = true)
                             }
                         },
+                        isArrival = true, // Mark as arrival to show special styling
                         modifier = Modifier
                             .align(Alignment.TopCenter)
                             .padding(
@@ -861,15 +875,48 @@ fun MapScreen(
                                     // close search overlay first to avoid any race where search UI stays on top
                                     vm.onBackClick()
                                     focusManager.clearFocus(force = true)
-                                    // Delay briefly to allow state update and recomposition to hide search UI
+
                                     composeScope.launch {
                                         delay(120)
-                                        showMarkerDialog = true
-                                        selectedPlaceForMarker = place
+
+                                        if (place == null) {
+                                            // Mark current device location: use ViewModel's currentLocation when available
+                                            val curLoc = state.currentLocation
+                                            val displayName =
+                                                state.reverseGeocodedLocation?.placeName
+                                                    ?: "Current Location"
+
+                                            initialMarkerMetadata = if (curLoc != null) {
+                                                com.example.lakbaylaya.ui.screens.map.models.MarkerMetadata(
+                                                    latitude = curLoc.latitude,
+                                                    longitude = curLoc.longitude,
+                                                    landmarkName = displayName
+                                                )
+                                            } else {
+                                                com.example.lakbaylaya.ui.screens.map.models.MarkerMetadata(
+                                                    landmarkName = "Current Location"
+                                                )
+                                            }
+
+                                            selectedPlaceForMarker = null
+                                            showMarkerDialog = true
+                                        } else {
+                                            // Mark the selected place from the bottom sheet
+                                            initialMarkerMetadata =
+                                                com.example.lakbaylaya.ui.screens.map.models.MarkerMetadata(
+                                                    latitude = place.latitude,
+                                                    longitude = place.longitude,
+                                                    landmarkName = place.placeName
+                                                )
+
+                                            selectedPlaceForMarker = place
+                                            showMarkerDialog = true
+                                        }
                                     }
                                 } else {
                                     showMarkerDialog = false
                                     selectedPlaceForMarker = null
+                                    initialMarkerMetadata = null
                                 }
                             },
 
@@ -884,12 +931,13 @@ fun MapScreen(
 
         // Marker action dialog - ALWAYS rendered last to ensure highest z-index
         // This must be outside all conditional blocks to be on top of everything
-        if (showMarkerDialog && selectedPlaceForMarker != null) {
+        if (showMarkerDialog && (selectedPlaceForMarker != null || initialMarkerMetadata != null)) {
             MarkerActionDialog(
                 isVisible = showMarkerDialog,
                 onDismiss = {
                     showMarkerDialog = false
                     selectedPlaceForMarker = null
+                    initialMarkerMetadata = null
                 },
                 onSaveNotes = { metadata ->
                     // If coordinates were provided by the dialog, add a new marker to the map
@@ -954,7 +1002,9 @@ fun MapScreen(
                 modifier = Modifier
                     .fillMaxSize()
                     .zIndex(100f), // ensure dialog is highest z-order
-                mapManager = mapManager
+                mapManager = mapManager,
+                initialMetadata = initialMarkerMetadata
+                    ?: com.example.lakbaylaya.ui.screens.map.models.MarkerMetadata()
             )
         }
     }

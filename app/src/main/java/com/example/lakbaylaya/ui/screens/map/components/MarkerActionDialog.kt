@@ -16,7 +16,6 @@ import androidx.compose.ui.window.Dialog
 import com.example.lakbaylaya.ui.screens.map.models.MarkerMetadata
 import com.example.lakbaylaya.ui.screens.map.components.markerEdit.MarkerLocationEditorDialog
 import com.example.lakbaylaya.maplibre.manager.MapLibreManager
-import androidx.compose.ui.platform.LocalContext
 import kotlinx.coroutines.launch
 import com.example.lakbaylaya.data.repository.MapRepositoryImpl
 import com.example.lakbaylaya.data.api.GeoapifyApiImpl
@@ -29,6 +28,7 @@ import com.example.lakbaylaya.data.api.GeoapifyApiImpl
  * @param onSaveNotes Callback when user saves marker notes
  * @param modifier Modifier for customization
  * @param mapManager MapLibreManager for controlling map during location editing
+ * @param initialMetadata Required initial metadata to pre-fill the dialog (coordinates/place name)
  */
 @Composable
 fun MarkerActionDialog(
@@ -36,7 +36,8 @@ fun MarkerActionDialog(
     modifier: Modifier = Modifier,
     mapManager: MapLibreManager? = null,
     onDismiss: () -> Unit,
-    onSaveNotes: (MarkerMetadata) -> Unit
+    onSaveNotes: (MarkerMetadata) -> Unit,
+    initialMetadata: MarkerMetadata
 ) {
     if (!isVisible) return
 
@@ -47,7 +48,8 @@ fun MarkerActionDialog(
         MapRepositoryImpl(GeoapifyApiImpl())
     }
 
-    var metadata by remember { mutableStateOf(MarkerMetadata()) }
+    // Initialize dialog metadata from provided initial metadata
+    var metadata by remember { mutableStateOf(initialMetadata) }
     var showMapEditor by remember { mutableStateOf(false) }
 
     // If map editor is active, show it instead of the dialog
@@ -129,7 +131,8 @@ private fun MarkerActionDialogPreview() {
         MarkerActionDialog(
             isVisible = true,
             onDismiss = {},
-            onSaveNotes = { }
+            onSaveNotes = { },
+            initialMetadata = MarkerMetadata()
         )
     }
 }

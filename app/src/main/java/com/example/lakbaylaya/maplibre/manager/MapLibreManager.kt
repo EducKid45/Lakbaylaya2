@@ -57,11 +57,20 @@ class MapLibreManager(context: Context) {
      */
     private fun configureMap() {
         mapLibreMap?.apply {
-            // Enable user location
+            // Enable comprehensive gesture controls
             uiSettings.apply {
+                // UI elements
                 isCompassEnabled = true
                 isAttributionEnabled = true
                 isLogoEnabled = true
+
+                // Gesture controls - enable all native camera controls
+                isScrollGesturesEnabled = true      // Pan/drag gestures
+                isZoomGesturesEnabled = true        // Pinch-to-zoom gestures
+                isRotateGesturesEnabled = true      // Rotation gestures
+                isTiltGesturesEnabled = true        // Tilt/pitch gestures
+                isQuickZoomGesturesEnabled = true   // Double-tap zoom
+                isDoubleTapGesturesEnabled = true   // Double-tap to zoom in
             }
 
             // Set initial camera position
@@ -166,6 +175,52 @@ class MapLibreManager(context: Context) {
             CameraUpdateFactory.newCameraPosition(position),
             duration
         )
+    }
+
+    /**
+     * Zoom in by one level
+     */
+    fun zoomIn(duration: Int = MapCameraConfig.ANIMATION_DURATION_MEDIUM) {
+        mapLibreMap?.let { map ->
+            val currentZoom = map.cameraPosition.zoom
+            val newPosition = MapCameraConfig.createPosition(
+                map.cameraPosition.target?.latitude ?: 0.0,
+                map.cameraPosition.target?.longitude ?: 0.0,
+                currentZoom + 1.0
+            )
+            map.animateCamera(CameraUpdateFactory.newCameraPosition(newPosition), duration)
+        }
+    }
+
+    /**
+     * Zoom out by one level
+     */
+    fun zoomOut(duration: Int = MapCameraConfig.ANIMATION_DURATION_MEDIUM) {
+        mapLibreMap?.let { map ->
+            val currentZoom = map.cameraPosition.zoom
+            val newPosition = MapCameraConfig.createPosition(
+                map.cameraPosition.target?.latitude ?: 0.0,
+                map.cameraPosition.target?.longitude ?: 0.0,
+                (currentZoom - 1.0).coerceAtLeast(0.0)
+            )
+            map.animateCamera(CameraUpdateFactory.newCameraPosition(newPosition), duration)
+        }
+    }
+
+    /**
+     * Center the camera on user's current location if available
+     */
+    fun centerOnUserLocation(zoom: Double = MapCameraConfig.ZOOM_STREET) {
+        mapLibreMap?.let { map ->
+            try {
+                val lastLocation = map.locationComponent.lastKnownLocation
+                lastLocation?.let { location ->
+                    animateTo(location.latitude, location.longitude, zoom)
+                }
+            } catch (e: Exception) {
+                Log.w("MapLibreManager", "Failed to center on user location: ${e.message}")
+            }
+        }
     }
 
     /**

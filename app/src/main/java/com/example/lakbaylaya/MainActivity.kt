@@ -4,6 +4,7 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.ExperimentalAnimationApi
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.fillMaxSize
@@ -24,6 +25,7 @@ import com.example.lakbaylaya.maplibre.manager.MapLibreManager
 import com.example.lakbaylaya.ui.screens.onboarding.WelcomeOnboardingScreen
 import com.example.lakbaylaya.ui.screens.onboarding.ProfileSetupOnboardingScreen
 import androidx.core.content.edit
+import com.example.lakbaylaya.emergency.EmergencyManager
 
 /**
  * MainActivity - Main entry point of the app
@@ -63,6 +65,22 @@ import androidx.core.content.edit
 class MainActivity : ComponentActivity() {
     private enum class OnboardingState { NONE, WELCOME, PROFILE }
 
+    // Permission request launcher for Bluetooth
+    private val permissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { results ->
+        // Forward permission results to ViewModel for auto-resume
+        PermissionResultHandler.setResults(results)
+    }
+
+    // Emergency manager instance (handles permissions, location, SMS sending)
+    private lateinit var emergencyManager: EmergencyManager
+
+    companion object {
+        // Replace with your predefined emergency contact number (E.164 recommended)
+        const val EMERGENCY_NUMBER = "+1234567890"
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
@@ -71,6 +89,18 @@ class MainActivity : ComponentActivity() {
 
         // Enable edge-to-edge display
         enableEdgeToEdge()
+
+        // Register permission launcher for emergency flow
+        val emergencyPermissionLauncher = registerForActivityResult(
+            ActivityResultContracts.RequestMultiplePermissions()
+        ) { results ->
+            // Forward results to emergency manager (will be initialized below)
+            emergencyManager.onPermissionResults(results)
+        }
+
+        // Initialize EmergencyManager - provide the emergency permission launcher
+        // Initialize EmergencyManager (on-device SMS). Pass the permission launcher.
+        emergencyManager = EmergencyManager(this, EMERGENCY_NUMBER, emergencyPermissionLauncher)
 
         // Get simple preferences to track whether onboarding was completed
         val prefs = getSharedPreferences("app_prefs", MODE_PRIVATE)
@@ -117,7 +147,11 @@ class MainActivity : ComponentActivity() {
                     }
 
                     OnboardingState.NONE -> {
-                        MainAppHost()
+                        MainAppHost(
+                            activity = this@MainActivity,
+                            permissionLauncher = permissionLauncher,
+                            onEmergency = { emergencyManager.sendEmergencySms() }
+                        )
                     }
                 }
             }
@@ -128,8 +162,27 @@ class MainActivity : ComponentActivity() {
 @OptIn(ExperimentalAnimationApi::class)
 @Composable
 private fun MainAppHost(
-    appViewModel: AppViewModel = viewModel()
+    activity: android.app.Activity? = null,
+    permissionLauncher: androidx.activity.result.ActivityResultLauncher<Array<String>>? = null,
+    // New callback for emergency one-tap
+    onEmergency: (() -> Unit)? = null
 ) {
+    // Obtain Application from the Compose LocalContext to ensure non-null Application
+    val app =
+        androidx.compose.ui.platform.LocalContext.current.applicationContext as android.app.Application
+
+    // Create AppViewModel with Application for Bluetooth initialization
+    val appViewModel: AppViewModel = viewModel(
+        factory = com.example.lakbaylaya.ui.navigationbars.viewmodel.AppViewModelFactory(app)
+    )
+
+    // Set permission launcher for Bluetooth operations
+    permissionLauncher?.let {
+        appViewModel.setBluetoothPermissionLauncher(it)
+        // Provide the Activity reference to ViewModel so it can launch system dialogs
+        appViewModel.setActivity(activity)
+    }
+
     // Moved MainApp body here to keep onboarding wiring clean
     // Navigation controller
     val navController = rememberNavController()
@@ -138,6 +191,7 @@ private fun MainAppHost(
 
     // Observe app state from ViewModel
     val isBluetoothEnabled by appViewModel.isBluetoothEnabled.collectAsState()
+    val bluetoothState by appViewModel.bluetoothState.collectAsState()
     val notificationCount by appViewModel.notificationCount.collectAsState()
 
     // State for bottom navigation visibility (hidden when search is active)
@@ -146,43 +200,46 @@ private fun MainAppHost(
     // Check if dark theme is active
     val isDarkTheme = isSystemInDarkTheme()
 
+    // Determine if we are on the Settings screen
+    val isSettingsScreen = currentRoute == NavRoutes.Settings.route
+    // Determine bottom nav visibility directly
+    isBottomNavVisible = !isSettingsScreen
+
     Scaffold(
         modifier = Modifier.fillMaxSize(),
         topBar = {
-            // Hide TopBar on Map screen so search bar can be at very top
-            // Use key to prevent animation when switching screens
             key(currentRoute) {
                 if (currentRoute != "map") {
                     TopBar(
                         isBluetoothEnabled = isBluetoothEnabled,
+                        bluetoothState = bluetoothState,
                         notificationCount = notificationCount,
                         isDarkTheme = isDarkTheme,
-                        // Navigate directly to Settings when settings is clicked
                         onSettingsClick = { navController.navigate(NavRoutes.Settings.route) },
                         onBackClick = { navController.popBackStack() },
-                        onEmergencyClick = { appViewModel.onEmergencyClick() },
+                        onEmergencyClick = {
+                            // Prefer one-tap EmergencyManager flow when provided, fall back to ViewModel
+                            if (onEmergency != null) onEmergency() else appViewModel.onEmergencyClick()
+                        },
                         onBluetoothClick = { appViewModel.toggleBluetooth() },
                         onNotificationsClick = { appViewModel.onNotificationsClick() },
-                        // Show back icon when we're on the Settings screen
-                        showBackIcon = (currentRoute == NavRoutes.Settings.route)
+                        showBackIcon = isSettingsScreen,
+                        showActions = !isSettingsScreen, // Hide actions on Settings
+                        title = if (isSettingsScreen) "Settings" else null // Show "Settings" title
                     )
                 }
             }
         },
         bottomBar = {
-            // Hide bottom navigation when search is active
             if (isBottomNavVisible) {
                 BottomNavBar(
                     currentRoute = currentRoute,
                     onNavigate = { route ->
                         navController.navigate(route) {
-                            // Pop up to the start destination to avoid building a large back stack
                             popUpTo(navController.graph.startDestinationId) {
                                 saveState = true
                             }
-                            // Avoid multiple copies of the same destination
                             launchSingleTop = true
-                            // Restore state when navigating back
                             restoreState = true
                         }
                     }
@@ -190,16 +247,12 @@ private fun MainAppHost(
             }
         }
     ) { paddingValues ->
-        // Screen content with padding to avoid overlap with bars
         NavGraph(
             navController = navController,
             modifier = Modifier
                 .fillMaxSize()
-                .padding(paddingValues),
-            // Forward visibility changes from Map screen to the Scaffold bottom bar
-            onBottomNavVisibilityChange = { visible ->
-                isBottomNavVisible = visible
-            }
+                .padding(paddingValues)
+            // onBottomNavVisibilityChange omitted; bottom nav visibility is derived from route
         )
     }
 }

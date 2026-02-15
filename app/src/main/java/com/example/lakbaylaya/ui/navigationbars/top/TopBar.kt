@@ -7,12 +7,14 @@ import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Bluetooth
 import androidx.compose.material.icons.filled.BluetoothDisabled
@@ -86,6 +88,7 @@ import com.example.lakbaylaya.ui.theme.Emergency
 @Composable
 fun TopBar(
     isBluetoothEnabled: Boolean,
+    bluetoothState: com.example.lakbaylaya.bluetooth.BluetoothState = com.example.lakbaylaya.bluetooth.BluetoothState.DISCONNECTED,
     notificationCount: Int,
     isDarkTheme: Boolean,
     onSettingsClick: () -> Unit,
@@ -93,7 +96,9 @@ fun TopBar(
     onEmergencyClick: () -> Unit,
     onBluetoothClick: () -> Unit,
     onNotificationsClick: () -> Unit,
-    showBackIcon: Boolean = false
+    showBackIcon: Boolean = false,
+    showActions: Boolean = true, // NEW PARAM
+    title: String? = null // NEW PARAM
 ) {
     // Precompute string resources in composable scope to avoid using Context inside semantics
     val settingsDesc = stringResource(R.string.content_desc_settings)
@@ -105,8 +110,8 @@ fun TopBar(
     val backDesc = stringResource(R.string.action_back)
 
     // Emergency pulse animation
-    val infiniteTransition = rememberInfiniteTransition(label = "emergency_pulse")
-    val emergencyAlpha by infiniteTransition.animateFloat(
+    val emergencyTransition = rememberInfiniteTransition(label = "emergency_pulse")
+    val emergencyAlpha by emergencyTransition.animateFloat(
         initialValue = 1f,
         targetValue = 0.6f,
         animationSpec = infiniteRepeatable(
@@ -116,15 +121,28 @@ fun TopBar(
         label = "emergency_alpha"
     )
 
-    // Bluetooth color animation
+    // Bluetooth color animation (based on state)
     val bluetoothColor by animateColorAsState(
-        targetValue = if (isBluetoothEnabled) {
-            if (isDarkTheme) DarkBluetoothOn else BluetoothOn
-        } else {
-            if (isDarkTheme) DarkBluetoothOff else BluetoothOff
+        targetValue = when (bluetoothState) {
+            com.example.lakbaylaya.bluetooth.BluetoothState.CONNECTED -> if (isDarkTheme) DarkBluetoothOn else BluetoothOn
+            com.example.lakbaylaya.bluetooth.BluetoothState.CONNECTING -> if (isDarkTheme) DarkBluetoothOn else BluetoothOn
+            com.example.lakbaylaya.bluetooth.BluetoothState.SCANNING -> if (isDarkTheme) DarkBluetoothOn else BluetoothOn
+            else -> if (isDarkTheme) DarkBluetoothOff else BluetoothOff
         },
         animationSpec = tween(300),
         label = "bluetooth_color"
+    )
+
+    // Pulsing animation for scanning/connecting
+    val btTransition = rememberInfiniteTransition(label = "bt_pulse")
+    val btPulseAlpha by btTransition.animateFloat(
+        initialValue = 0.4f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(800),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "bt_pulse_alpha"
     )
 
     val emergencyColor = if (isDarkTheme) DarkEmergency else Emergency
@@ -135,13 +153,13 @@ fun TopBar(
         Column {
             TopAppBar(
                 title = {
-                    // Centered app name
                     Box(
                         modifier = Modifier.padding(horizontal = 8.dp),
                         contentAlignment = Alignment.Center
                     ) {
                         Text(
-                            text = stringResource(R.string.app_name),
+                            text = title
+                                ?: stringResource(R.string.app_name), // Use custom title if provided
                             style = MaterialTheme.typography.titleLarge,
                             fontWeight = FontWeight.Bold,
                             fontSize = 20.sp
@@ -165,7 +183,6 @@ fun TopBar(
                             )
                         }
                     } else {
-                        // Settings - Left corner
                         IconButton(
                             onClick = onSettingsClick,
                             modifier = Modifier
@@ -183,88 +200,113 @@ fun TopBar(
                     }
                 },
                 actions = {
-                    // Right corner actions
-                    Row(
-                        horizontalArrangement = Arrangement.spacedBy(4.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        // Emergency button with pulse
-                        IconButton(
-                            onClick = onEmergencyClick,
-                            modifier = Modifier
-                                .size(48.dp)
-                                .alpha(emergencyAlpha)
-                                .semantics {
-                                    contentDescription = emergencyDesc
-                                }
+                    if (showActions) { // Only show actions if true
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Icon(
-                                imageVector = Icons.Default.Warning,
-                                contentDescription = stringResource(R.string.action_emergency),
-                                tint = emergencyColor
-                            )
-                        }
-
-                        // Bluetooth with state-based color
-                        IconButton(
-                            onClick = onBluetoothClick,
-                            modifier = Modifier
-                                .size(48.dp)
-                                .semantics {
-                                    contentDescription = if (isBluetoothEnabled) {
-                                        bluetoothOnDesc
-                                    } else {
-                                        bluetoothOffDesc
+                            // Emergency button with pulse
+                            IconButton(
+                                onClick = onEmergencyClick,
+                                modifier = Modifier
+                                    .size(48.dp)
+                                    .alpha(emergencyAlpha)
+                                    .semantics {
+                                        contentDescription = emergencyDesc
                                     }
-                                }
-                        ) {
-                            Icon(
-                                imageVector = if (isBluetoothEnabled) {
-                                    Icons.Default.Bluetooth
-                                } else {
-                                    Icons.Default.BluetoothDisabled
-                                },
-                                contentDescription = stringResource(R.string.action_bluetooth),
-                                tint = bluetoothColor
-                            )
-                        }
-
-                        // Notifications with badge
-                        IconButton(
-                            onClick = onNotificationsClick,
-                            modifier = Modifier
-                                .size(48.dp)
-                                .semantics {
-                                    contentDescription = notificationsDesc
-                                }
-                        ) {
-                            BadgedBox(
-                                badge = {
-                                    if (notificationCount > 0) {
-                                        Badge(
-                                            containerColor = accentColor,
-                                            modifier = Modifier.semantics {
-                                                contentDescription = badgeDesc
-                                            }
-                                        ) {
-                                            Text(
-                                                text = if (notificationCount > 99) {
-                                                    stringResource(R.string.notification_badge_over_99)
-                                                } else {
-                                                    notificationCount.toString()
-                                                },
-                                                fontSize = 10.sp,
-                                                fontWeight = FontWeight.Bold
-                                            )
-                                        }
-                                    }
-                                }
                             ) {
                                 Icon(
-                                    imageVector = Icons.Default.Notifications,
-                                    contentDescription = stringResource(R.string.action_notifications),
-                                    tint = MaterialTheme.colorScheme.onSurface
+                                    imageVector = Icons.Default.Warning,
+                                    contentDescription = stringResource(R.string.action_emergency),
+                                    tint = emergencyColor
                                 )
+                            }
+
+                            // Bluetooth with state-based visual indicator
+                            IconButton(
+                                onClick = onBluetoothClick,
+                                modifier = Modifier
+                                    .size(48.dp)
+                                    .semantics {
+                                        contentDescription = when (bluetoothState) {
+                                            com.example.lakbaylaya.bluetooth.BluetoothState.SCANNING -> bluetoothOnDesc
+                                            com.example.lakbaylaya.bluetooth.BluetoothState.CONNECTING -> bluetoothOnDesc
+                                            com.example.lakbaylaya.bluetooth.BluetoothState.CONNECTED -> bluetoothOnDesc
+                                            else -> bluetoothOffDesc
+                                        }
+                                    }
+                            ) {
+                                // Icon-only: show Bluetooth icon and pulsing dot when active
+                                Box(contentAlignment = Alignment.Center) {
+                                    val iconVector = when (bluetoothState) {
+                                        com.example.lakbaylaya.bluetooth.BluetoothState.CONNECTED -> Icons.Default.Bluetooth
+                                        com.example.lakbaylaya.bluetooth.BluetoothState.SCANNING -> Icons.Default.Bluetooth
+                                        com.example.lakbaylaya.bluetooth.BluetoothState.CONNECTING -> Icons.Default.Bluetooth
+                                        else -> Icons.Default.BluetoothDisabled
+                                    }
+
+                                    Icon(
+                                        imageVector = iconVector,
+                                        contentDescription = stringResource(R.string.action_bluetooth),
+                                        tint = bluetoothColor
+                                    )
+
+                                    // Small pulsing dot when scanning or connecting
+                                    if (bluetoothState == com.example.lakbaylaya.bluetooth.BluetoothState.SCANNING ||
+                                        bluetoothState == com.example.lakbaylaya.bluetooth.BluetoothState.CONNECTING
+                                    ) {
+                                        Box(
+                                            modifier = Modifier
+                                                .align(Alignment.TopEnd)
+                                                .size(8.dp)
+                                                .padding(end = 6.dp, top = 6.dp)
+                                                .alpha(btPulseAlpha)
+                                                .background(
+                                                    color = bluetoothColor,
+                                                    shape = CircleShape
+                                                )
+                                        ) {}
+                                    }
+                                }
+                            }
+
+                            // Notifications with badge
+                            IconButton(
+                                onClick = onNotificationsClick,
+                                modifier = Modifier
+                                    .size(48.dp)
+                                    .semantics {
+                                        contentDescription = notificationsDesc
+                                    }
+                            ) {
+                                BadgedBox(
+                                    badge = {
+                                        if (notificationCount > 0) {
+                                            Badge(
+                                                containerColor = accentColor,
+                                                modifier = Modifier.semantics {
+                                                    contentDescription = badgeDesc
+                                                }
+                                            ) {
+                                                Text(
+                                                    text = if (notificationCount > 99) {
+                                                        stringResource(R.string.notification_badge_over_99)
+                                                    } else {
+                                                        notificationCount.toString()
+                                                    },
+                                                    fontSize = 10.sp,
+                                                    fontWeight = FontWeight.Bold
+                                                )
+                                            }
+                                        }
+                                    }
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Notifications,
+                                        contentDescription = stringResource(R.string.action_notifications),
+                                        tint = MaterialTheme.colorScheme.onSurface
+                                    )
+                                }
                             }
                         }
                     }
@@ -283,3 +325,4 @@ fun TopBar(
         }
     }
 }
+

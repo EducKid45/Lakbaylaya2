@@ -36,7 +36,8 @@ class MapNavigationManager(
         // Debug log
         android.util.Log.d(
             "MapNavigationManager",
-            "Starting navigation with ${selectedRoute.steps.size} steps:"
+            "Starting navigation with ${selectedRoute.steps.size} steps to destination: " +
+                    "(${dirData.destination.latitude}, ${dirData.destination.longitude}) '${dirData.destination.name}'"
         )
         selectedRoute.steps.forEachIndexed { index, step ->
             android.util.Log.d(
@@ -49,11 +50,14 @@ class MapNavigationManager(
         navigationProgressManager =
             com.example.lakbaylaya.ui.screens.map.navigation.progress.NavigationProgressManager()
                 .apply {
-                    setStepThreshold(5.0)
-                    setGpsAccuracyThreshold(15.0)
+                    setStepThreshold(10.0) // 10m threshold for regular steps
+                    setGpsAccuracyThreshold(20.0) // 20m accuracy threshold
+                    setFinalDestinationThreshold(25.0) // 25m threshold for final arrival
 
                     startNavigation(
                         route = selectedRoute,
+                        destinationLatitude = dirData.destination.latitude,
+                        destinationLongitude = dirData.destination.longitude,
                         onStepAdvanced = { step, stepIndex ->
                             onNavigationStepAdvanced(step, stepIndex)
                         },
@@ -61,9 +65,17 @@ class MapNavigationManager(
                             onNavigationProgressUpdate(stepDistance, totalDistance)
                         },
                         onNavigationComplete = {
+                            android.util.Log.i(
+                                "MapNavigationManager",
+                                "🎯 Navigation complete callback triggered!"
+                            )
                             onNavigationComplete()
                         },
-                        onDestinationArrived = {
+                        onDestinationArrived = { arrivalInfo ->
+                            android.util.Log.i(
+                                "MapNavigationManager",
+                                "🎯 Destination arrival callback triggered!"
+                            )
                             onNavigationComplete()
                         }
                     )
@@ -85,7 +97,8 @@ class MapNavigationManager(
             stepCount = 0,
             isMuted = false,
             mapMode = MapViewMode.MODE_2D,
-            isLocationTracking = false
+            isLocationTracking = false,
+            isCompleted = false // Start with not completed
         )
 
         state.update {
@@ -112,41 +125,32 @@ class MapNavigationManager(
         val navState = state.value.navigationState
         if (navState !is NavigationState.Active) return
 
+        // Check if already completed to avoid redundant processing
+        if (navState.isCompleted) {
+            android.util.Log.d(
+                "MapNavigationManager",
+                "Navigation already completed, ignoring location update"
+            )
+            return
+        }
+
         android.util.Log.d(
             "MapNavigationManager",
-            "GPS Update: ${location.latitude}, ${location.longitude}, accuracy: ${location.accuracy}m"
+            "GPS Update: ${location.latitude}, ${location.longitude}, accuracy: ${location.accuracy}m, " +
+                    "current step: ${navState.currentStepIndex}/${navState.getTotalSteps() - 1}"
         )
 
         // Update navigation state with new location
         state.update { it.copy(navigationState = navState.updateLocation(location)) }
 
-        // Update progress manager
-        navigationProgressManager?.updateLocation(location)
+        // Update progress manager (this will trigger arrival detection automatically)
+        navigationProgressManager?.let { progressManager ->
+            progressManager.updateLocation(location)
 
-        try {
-            val withinThreshold = navigationProgressManager?.isWithinDestinationThreshold() == true
-            if (withinThreshold) {
-                android.util.Log.d(
-                    "MapNavigationManager",
-                    "Detected within destination threshold - marking navigation complete"
-                )
-                onNavigationComplete()
-            } else {
-                val distanceToDest = navigationProgressManager?.getDistanceToDestination()
-                if (distanceToDest != null && distanceToDest <= 25.0) {
-                    android.util.Log.d(
-                        "MapNavigationManager",
-                        "Distance to destination ${distanceToDest}m <= 25m - marking navigation complete (fallback)"
-                    )
-                    onNavigationComplete()
-                }
+            // Log debug info periodically (every few updates)
+            if (System.currentTimeMillis() % 5000 < 1000) { // Roughly every 5 seconds
+                android.util.Log.d("MapNavigationManager", progressManager.getDebugInfo())
             }
-        } catch (e: Exception) {
-            android.util.Log.e(
-                "MapNavigationManager",
-                "Error checking arrival threshold: ${e.message}",
-                e
-            )
         }
 
         android.util.Log.d(
@@ -190,13 +194,13 @@ class MapNavigationManager(
         val navState = state.value.navigationState
         if (navState !is NavigationState.Active) return
 
+        // Mark navigation as completed so the UI shows arrival message and Done button
         val completedState = navState.copy(isCompleted = true)
         state.update { it.copy(navigationState = completedState) }
 
-        navigationProgressManager?.stopNavigation()
-        android.util.Log.d(
+        android.util.Log.i(
             "MapNavigationManager",
-            "Navigation completed - marked as completed in state"
+            "🎯 Navigation marked as completed - UI should now show 'You have arrived!' and Done button"
         )
     }
 
@@ -231,5 +235,11 @@ class MapNavigationManager(
             "MapNavigationManager",
             "Navigation finished (Done) - returned to normal mode"
         )
+    }
+
+    /** Test method to manually trigger arrival for debugging */
+    fun testArrival() {
+        android.util.Log.i("MapNavigationManager", "🧪 TEST: Force triggering arrival detection")
+        navigationProgressManager?.forceArrival()
     }
 }

@@ -22,6 +22,21 @@
     <string name="content_desc_notifications">Open notifications</string>
     <string name="content_desc_notification_badge">%1$d unread notifications</string>
 
+    <!-- Bluetooth Messages -->
+    <string name="bluetooth_enabling">Enabling Bluetooth...</string>
+    <string name="bluetooth_scanning">Searching for ESP32…</string>
+    <string name="bluetooth_connecting">Connecting to ESP32...</string>
+    <string name="bluetooth_connected">Connected to ESP32</string>
+    <string name="bluetooth_disconnected">Disconnected from ESP32</string>
+    <string name="bluetooth_error">Bluetooth error</string>
+    <string name="bluetooth_permission_denied">Bluetooth permissions denied</string>
+    <string name="bluetooth_not_supported">Bluetooth not supported on this device</string>
+    <string name="bluetooth_device_not_found">No ESP32 devices found</string>
+
+    <!-- Bluetooth Notifications -->
+    <string name="notification_connected_title">%1$s Connected</string>
+    <string name="notification_connected_text">Device ready</string>
+
     <!-- Navigation Accessibility -->
     <string name="nav_home_selected">Home screen, selected</string>
     <string name="nav_home_not_selected">Home screen, not selected</string>
