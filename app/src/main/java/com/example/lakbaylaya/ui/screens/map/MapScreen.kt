@@ -1,7 +1,6 @@
 package com.example.lakbaylaya.ui.screens.map
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -11,6 +10,7 @@ import androidx.compose.ui.semantics.testTag
 import androidx.compose.ui.zIndex
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.lifecycle.ViewModelProvider
 import com.example.lakbaylaya.ui.screens.map.components.*
 import com.example.lakbaylaya.maplibre.config.MapStyleConfig
 import com.example.lakbaylaya.ui.screens.map.models.BottomSheetState
@@ -23,6 +23,7 @@ import com.example.lakbaylaya.ui.screens.map.navigation.tts.AndroidTextToSpeechE
 import com.example.lakbaylaya.ui.screens.map.navigation.pedometer.AndroidStepDetector
 import com.example.lakbaylaya.ui.screens.map.viewmodel.MapViewModel
 import com.example.lakbaylaya.ui.screens.map.viewmodel.MapViewModelFactory
+import com.example.lakbaylaya.ui.screens.map.viewmodel.MarkerDataViewModel
 import com.example.lakbaylaya.utils.rememberLocationPermissionState
 import com.example.lakbaylaya.data.model.VoiceNote
 import androidx.compose.ui.unit.Dp
@@ -34,7 +35,6 @@ import androidx.compose.material3.TextButton
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
-import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import com.example.lakbaylaya.ui.screens.map.components.MapLibreView
@@ -142,8 +142,14 @@ fun MapScreen(
         )
     )
 
+    // ViewModel for marker data persistence using AndroidViewModelFactory
+    val markerDataVm: MarkerDataViewModel = viewModel(
+        factory = ViewModelProvider.AndroidViewModelFactory(
+            context.applicationContext as android.app.Application
+        )
+    )
+
     val state by vm.state.collectAsState()
-    val isDarkTheme = isSystemInDarkTheme()
 
     // Create and remember MapLibreManager (explicit type ensures methods are resolved)
     val mapManager: MapLibreManager = remember { MapLibreManager(context) }
@@ -160,27 +166,7 @@ fun MapScreen(
         )
     }
     val focusManager = LocalFocusManager.current
-    val keyboardController = LocalSoftwareKeyboardController.current
     val composeScope = rememberCoroutineScope()
-
-    // Helper to open the marker dialog safely: close/hide search UI first, then wait for it to hide
-    fun openMarkerDialogSafely(place: com.example.lakbaylaya.ui.screens.map.models.SearchResult?) {
-        // Request closing of search overlay and clear focus/keyboard
-        vm.onBackClick()
-        focusManager.clearFocus(force = true)
-        keyboardController?.hide()
-
-        composeScope.launch {
-            // Wait up to 1 second for the search overlay to actually close to avoid races
-            var waited = 0
-            while (state.isSearchOverlayActive && waited < 1000) {
-                delay(50)
-                waited += 50
-            }
-            showMarkerDialog = true
-            selectedPlaceForMarker = place
-        }
-    }
 
     // When marker dialog opens, clear focus to dismiss keyboard/search focus which may render UI above the dialog
     LaunchedEffect(showMarkerDialog) {
@@ -341,15 +327,15 @@ fun MapScreen(
     LaunchedEffect(isMapReady, refreshVoiceNotes) {
         if (isMapReady) {
 
-            // Clear existing markers before adding new ones
-            mapManager.clearMarkers()
+            // Do not clear user-added temporary markers here. Only refresh voice note markers.
 
-            // Display voice note markers on map
+            // Display voice note markers on map (ensure persistent)
             voiceNotes.forEach { note ->
                 mapManager.addMarker(
                     latitude = note.latitude,
                     longitude = note.longitude,
-                    title = "Voice Note: ${note.id}"
+                    title = "Voice Note: ${note.id}",
+                    persistent = true
                 )
             }
 
@@ -369,8 +355,9 @@ fun MapScreen(
     LaunchedEffect(state.selectedResult, isMapReady) {
         if (isMapReady) {
             state.selectedResult?.let { result ->
-                // Clear previous markers
-                mapManager.clearMarkers()
+                // Clear previous temporary markers (preserve saved/persistent markers)
+                // Only clear preview markers (don't remove user-set temporary red markers)
+                mapManager.clearPreviewMarkers()
 
                 // Add new marker
                 mapManager.addMarker(
@@ -386,8 +373,8 @@ fun MapScreen(
                     zoom = 15.0
                 )
             } ?: run {
-                // When selectedResult is null, clear markers
-                mapManager.clearMarkers()
+                // When selectedResult is null, clear preview markers only (preserve user-set temporary red markers)
+                mapManager.clearPreviewMarkers()
             }
         }
     }
@@ -399,7 +386,7 @@ fun MapScreen(
         if (isMapReady) {
             // Clear existing polylines and labels
             mapManager.clearPolylines()
-            mapManager.clearMarkers()
+            mapManager.clearAllMarkers()
             mapManager.clearStopMarkers()
 
             // Draw all route polylines and add labels at midpoint
@@ -570,8 +557,7 @@ fun MapScreen(
                     },
                     modifier = Modifier
                         .fillMaxWidth()
-                        // Lower search bar z-index when place sheet is fully expanded so it stays behind
-                        .zIndex(if (state.bottomSheetState is BottomSheetState.Full) 0f else 3f)
+                        .zIndex(3f)
                         .padding(top = topStatusBarPadding)
                 )
 
@@ -793,8 +779,7 @@ fun MapScreen(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .align(Alignment.TopCenter)
-                                // Lower search bar z-index when place sheet is fully expanded so it stays behind
-                                .zIndex(if (state.bottomSheetState is BottomSheetState.Full) 0f else 3f)
+                                .zIndex(3f)
                                 .padding(top = topStatusBarPadding)
                         )
                     } else {
@@ -807,7 +792,7 @@ fun MapScreen(
                     }
                 }
 
-                // Bottom Sheets based on mode (render outside of the search bar branch)
+                // Bottom Sheets based on mode
                 if (isDirectionMode) {
                     // Direction Mode: Show Direction sheet (unless overlay panel is expanded)
                     if (!state.isOverlayPanelExpanded) {
@@ -855,9 +840,9 @@ fun MapScreen(
                     )
 
                     // Place sheet (when place is selected)
-                    if (state.bottomSheetState !is BottomSheetState.Hidden &&
+                    if ((state.bottomSheetState !is BottomSheetState.Hidden &&
                         state.bottomSheetState !is BottomSheetState.DirectionInitial &&
-                        state.bottomSheetState !is BottomSheetState.DirectionFullExpand
+                                state.bottomSheetState !is BottomSheetState.DirectionFullExpand) && !showMarkerDialog
                     ) {
                         PlaceBottomSheet(
                             sheetState = state.bottomSheetState,
@@ -873,7 +858,15 @@ fun MapScreen(
                             showMarkerDialog = showMarkerDialog,
                             onShowMarkerDialog = { show, place ->
                                 if (show) {
-                                    openMarkerDialogSafely(place)
+                                    // close search overlay first to avoid any race where search UI stays on top
+                                    vm.onBackClick()
+                                    focusManager.clearFocus(force = true)
+                                    // Delay briefly to allow state update and recomposition to hide search UI
+                                    composeScope.launch {
+                                        delay(120)
+                                        showMarkerDialog = true
+                                        selectedPlaceForMarker = place
+                                    }
                                 } else {
                                     showMarkerDialog = false
                                     selectedPlaceForMarker = null
@@ -881,34 +874,88 @@ fun MapScreen(
                             },
 
                             modifier = Modifier
-                                .align(Alignment.BottomCenter)
-                                // If the place sheet is fully expanded, give it a higher z-index
-                                .zIndex(if (state.bottomSheetState is BottomSheetState.Full) 6f else 1f),
+                                .align(Alignment.BottomCenter),
                             bottomNavigationHeight = 80.dp
                         )
                     }
                 }
             }
+        }
 
-            // Marker action dialog - ALWAYS rendered last to ensure highest z-index
-            // This must be outside all conditional blocks to be on top of everything
-            if (showMarkerDialog && selectedPlaceForMarker != null) {
-                MarkerActionDialog(
-                    isVisible = showMarkerDialog,
-                    onDismiss = {
-                        showMarkerDialog = false
-                        selectedPlaceForMarker = null
-                    },
-                    onSaveNotes = { metadata ->
-                        // TODO: Save metadata to database or fire event
-                        showMarkerDialog = false
-                        selectedPlaceForMarker = null
-                    },
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .zIndex(100f) // ensure dialog is highest z-order
-                )
-            }
+        // Marker action dialog - ALWAYS rendered last to ensure highest z-index
+        // This must be outside all conditional blocks to be on top of everything
+        if (showMarkerDialog && selectedPlaceForMarker != null) {
+            MarkerActionDialog(
+                isVisible = showMarkerDialog,
+                onDismiss = {
+                    showMarkerDialog = false
+                    selectedPlaceForMarker = null
+                },
+                onSaveNotes = { metadata ->
+                    // If coordinates were provided by the dialog, add a new marker to the map
+                    metadata.latitude?.let { lat ->
+                        metadata.longitude?.let { lng ->
+                            // Ensure map is ready before adding the marker. If not ready, schedule add.
+                            composeScope.launch {
+                                if (!isMapReady) {
+                                    // wait until map is initialized
+                                    while (!isMapReady) {
+                                        delay(100)
+                                    }
+                                }
+
+                                // Clear preview markers before adding the new green one
+                                mapManager.clearPreviewMarkers()
+
+                                // Add ONLY the green persistent marker directly - no preview, no promotion
+                                mapManager.addMarker(
+                                    latitude = lat,
+                                    longitude = lng,
+                                    title = metadata.landmarkName.ifBlank { "Saved Marker" },
+                                    persistent = true // GREEN MARKER
+                                )
+
+                                android.util.Log.d(
+                                    "MapScreen",
+                                    "Added green persistent marker at $lat,$lng"
+                                )
+
+                                // Persist to database
+                                markerDataVm.saveLandmark(
+                                    latitude = lat,
+                                    longitude = lng,
+                                    locationName = metadata.landmarkName,
+                                    routeDifficulty = metadata.routeDifficulty,
+                                    description = metadata.landmarkDescription
+                                )
+
+                                // Save voice notes to database
+                                metadata.voiceNotes.forEach { voiceNote ->
+                                    voiceNote.audioFilePath?.let { audioPath ->
+                                        markerDataVm.saveVoiceNote(
+                                            latitude = lat,
+                                            longitude = lng,
+                                            locationName = metadata.landmarkName,
+                                            audioFilePath = audioPath,
+                                            transcription = voiceNote.text,
+                                            durationSeconds = 0 // TODO: calculate duration
+                                        )
+                                    }
+                                }
+
+                                android.util.Log.d("MapScreen", "Persisted marker data to database")
+                            }
+                        }
+                    }
+
+                    showMarkerDialog = false
+                    selectedPlaceForMarker = null
+                },
+                modifier = Modifier
+                    .fillMaxSize()
+                    .zIndex(100f), // ensure dialog is highest z-order
+                mapManager = mapManager
+            )
         }
     }
 }
