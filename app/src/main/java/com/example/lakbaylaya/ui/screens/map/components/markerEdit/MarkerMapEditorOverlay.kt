@@ -11,6 +11,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.clickable
 import com.example.lakbaylaya.maplibre.manager.MapLibreManager
@@ -33,11 +35,15 @@ fun MarkerMapEditorOverlay(
     mapManager: MapLibreManager?,
     mapContent: @Composable () -> Unit,
     onLocationSelected: (latitude: Double, longitude: Double, address: String) -> Unit,
-    onCancel: () -> Unit
+    onCancel: () -> Unit,
+    initialLatitude: Double? = null,
+    initialLongitude: Double? = null,
+    initialLabel: String? = null
 ) {
     // Map state - default to 0.0 until we read a real value
     var mapCenterLatitude by remember { mutableStateOf(0.0) }
     var mapCenterLongitude by remember { mutableStateOf(0.0) }
+    var initialLabelState by remember { mutableStateOf<String?>(null) }
 
     val context = LocalContext.current
     val locationProvider = remember { LocationProvider(context) }
@@ -53,8 +59,40 @@ fun MarkerMapEditorOverlay(
 
     val scope = rememberCoroutineScope()
 
-    // Try to initialize the starting center: prefer the map manager center; otherwise use last known device location
+    // Try to initialize the starting center: prefer an explicit initial latitude/longitude, otherwise map manager center, otherwise last known device location
     LaunchedEffect(mapManager) {
+        // If caller provided initial coordinates (editor opened from search result), use them
+        val providedLat = initialLatitude
+        val providedLng = initialLongitude
+        if (providedLat != null && providedLng != null) {
+            mapCenterLatitude = providedLat
+            mapCenterLongitude = providedLng
+            initialLabelState = initialLabel
+
+            // Move map to provided location
+            try {
+                mapManager?.animateTo(
+                    mapCenterLatitude,
+                    mapCenterLongitude,
+                    zoom = 17.0,
+                    duration = 200
+                )
+            } catch (_: Exception) {
+                // ignore
+            }
+
+            // Attempt to refresh display label using reverse geocode (best effort)
+            scope.launch {
+                repository.getPlaceFromCoordinates(mapCenterLatitude, mapCenterLongitude)
+                    .onSuccess { name ->
+                        if (name.isNotBlank()) locationLabel = name
+                    }
+            }
+
+            return@LaunchedEffect
+        }
+
+        // Otherwise fallback to map manager center then last known device location
         val center = mapManager?.getCenter()
         if (center != null) {
             mapCenterLatitude = center.first
@@ -74,7 +112,7 @@ fun MarkerMapEditorOverlay(
                     mapCenterLatitude = it.latitude
                     mapCenterLongitude = it.longitude
 
-                    // Update label using repository
+                    // Update label by reverse-geocoding
                     scope.launch {
                         repository.getPlaceFromCoordinates(mapCenterLatitude, mapCenterLongitude)
                             .onSuccess { name ->
@@ -302,9 +340,13 @@ fun MarkerMapEditorOverlay(
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
                     Text(
-                        locationLabel,
+                        // Prefer initialLabelState (open-from-search) when present, otherwise the live locationLabel
+                        initialLabelState ?: locationLabel,
                         style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.primary
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(

@@ -2,6 +2,7 @@ package com.example.lakbaylaya.ui.screens.map.components.markerEdit
 
 import androidx.compose.runtime.*
 import com.example.lakbaylaya.maplibre.manager.MapLibreManager
+import com.example.lakbaylaya.ui.screens.map.models.SearchResult
 
 /**
  * Full-screen map editor overlay for selecting a new marker location.
@@ -15,6 +16,8 @@ import com.example.lakbaylaya.maplibre.manager.MapLibreManager
 fun MarkerLocationEditorDialog(
     isVisible: Boolean,
     mapManager: MapLibreManager?,
+    // Optional initial SearchResult when editor was opened from a search result
+    initialResult: SearchResult? = null,
     onLocationSelected: (latitude: Double, longitude: Double, address: String) -> Unit,
     onCancel: () -> Unit
 ) {
@@ -22,6 +25,9 @@ fun MarkerLocationEditorDialog(
 
     MarkerMapEditorOverlay(
         mapManager = mapManager,
+        initialLabel = initialResult?.placeName,
+        initialLatitude = initialResult?.latitude,
+        initialLongitude = initialResult?.longitude,
         mapContent = {
             // The actual MapLibre map will be rendered behind this overlay
             // by the parent MapScreen composable
@@ -30,16 +36,3 @@ fun MarkerLocationEditorDialog(
         onCancel = onCancel
     )
 }
-
-
-
-
-
-
-
-
-
-
-
-
-

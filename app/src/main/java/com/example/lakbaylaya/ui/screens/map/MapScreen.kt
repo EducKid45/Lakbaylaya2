@@ -1,5 +1,10 @@
 package com.example.lakbaylaya.ui.screens.map
 
+import android.content.Intent
+import android.content.Context
+import android.os.Build
+import android.os.VibrationEffect
+import android.os.Vibrator
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.runtime.*
@@ -41,17 +46,11 @@ import com.example.lakbaylaya.ui.screens.map.components.MapLibreView
 import com.example.lakbaylaya.maplibre.manager.MapLibreManager
 import com.example.lakbaylaya.ui.screens.map.models.ManeuverType
 import com.example.lakbaylaya.ui.screens.map.models.DirectionStep
-import com.example.lakbaylaya.ui.screens.map.models.MarkerMetadata
-import com.example.lakbaylaya.data.repository.MapRepositoryImpl
-import com.example.lakbaylaya.data.api.GeoapifyApiImpl
-import kotlinx.coroutines.CompletableDeferred
-import android.location.Location as AndroidLocation
-import androidx.core.app.ActivityCompat
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import android.content.Intent
 import android.speech.RecognizerIntent
 import android.widget.Toast
+import com.example.lakbaylaya.ui.screens.map.navigation.voice.VoiceCommand
 
 
 /**
@@ -163,6 +162,9 @@ fun MapScreen(
 
     val state by vm.state.collectAsState()
 
+    // Create a coroutine scope for launching short delays before opening the recognizer
+    val composeScope = rememberCoroutineScope()
+
     // Speech recognizer launcher: system voice recognition activity (shows Google mic UI)
     val speechLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.StartActivityForResult()
@@ -217,8 +219,12 @@ fun MapScreen(
         contract = ActivityResultContracts.RequestPermission()
     ) { granted ->
         if (granted) {
-            // Permission granted, now launch the speech recognizer
-            launchSpeechRecognizer(context, speechLauncher, vm)
+            // Permission granted, speak cue then launch the speech recognizer shortly after
+            composeScope.launch {
+                vm.playListeningCue()
+                delay(350)
+                launchSpeechRecognizer(context, speechLauncher, vm)
+            }
         } else {
             Toast.makeText(
                 context,
@@ -257,7 +263,22 @@ fun MapScreen(
         )
     }
     val focusManager = LocalFocusManager.current
-    val composeScope = rememberCoroutineScope()
+    // use the composeScope declared earlier (rememberCoroutineScope) to launch short coroutines
+
+    // When marker editor becomes active, ensure all overlays and bottom sheets are closed
+    // This guards against races where search overlay or place-sheet might still be visible.
+    LaunchedEffect(state.isMarkerEditing) {
+        if (state.isMarkerEditing) {
+            // Clear focus to hide keyboard
+            focusManager.clearFocus(force = true)
+
+            // Close search overlay immediately
+            vm.onBackClick()
+
+            // Hide any bottom sheet to ensure editor OK/Confirm buttons are visible
+            vm.onBottomSheetStateChange(BottomSheetState.Hidden)
+        }
+    }
 
     // Handle mic click: check permission and launch Google speech recognizer
     fun handleMicClick() {
@@ -271,8 +292,12 @@ fun MapScreen(
                 )
 
         if (hasPermission) {
-            // Permission already granted, launch speech recognizer directly
-            launchSpeechRecognizer(context, speechLauncher, vm)
+            // Permission already granted, speak cue then launch speech recognizer shortly after
+            composeScope.launch {
+                vm.playListeningCue()
+                delay(350)
+                launchSpeechRecognizer(context, speechLauncher, vm)
+            }
         } else {
             // Request permission first
             micPermissionLauncher.launch(android.Manifest.permission.RECORD_AUDIO)
@@ -293,6 +318,214 @@ fun MapScreen(
     val stepDetector = remember { AndroidStepDetector(context) }
     val locationTracker = remember { com.example.lakbaylaya.ui.screens.map.navigation.location.AndroidLocationTracker(context) }
 
+    // Initialize NavigationVoiceManager for voice commands during navigation
+    val navigationVoiceManager = remember {
+        // Create the handler object first
+        val handler =
+            object : com.example.lakbaylaya.ui.screens.map.navigation.voice.VoiceCommandHandler {
+                override fun onRepeatInstruction() {
+                    // Repeat the current instruction
+                    (state.navigationState as? NavigationState.Active)?.getCurrentStep()
+                        ?.let { step ->
+                            ttsEngine.speak(step.instruction, priority = true)
+                        }
+                }
+
+                override fun onPauseNavigation() {
+                    // TODO: Implement pause logic in ViewModel/NavigationManager
+                    android.util.Log.d("MapScreen", "Pause navigation command")
+                }
+
+                override fun onResumeNavigation() {
+                    // TODO: Implement resume logic
+                    android.util.Log.d("MapScreen", "Resume navigation command")
+                }
+
+                override fun onCheckCurrentPosition(latitude: Double, longitude: Double) {
+                    // Current position is already being displayed on map
+                    android.util.Log.d("MapScreen", "Current position: $latitude, $longitude")
+                }
+
+                override fun onDistanceToDestination(distanceMeters: Double) {
+                    // Distance feedback is spoken by NavigationVoiceManager
+                    android.util.Log.d(
+                        "MapScreen",
+                        "Distance to destination: $distanceMeters meters"
+                    )
+                }
+
+                override fun onSwitchRoute() {
+                    // Switch to next available route if multiple routes exist
+                    val currentNav = state.navigationState
+                    if (currentNav is NavigationState.Active) {
+                        val dirData = state.directionData
+                        if (dirData != null && dirData.routes.size > 1) {
+                            val nextIndex = (dirData.selectedRouteIndex + 1) % dirData.routes.size
+                            vm.onRouteChange(nextIndex)
+                        }
+                    }
+                }
+
+                override fun onCancelNavigation() {
+                    vm.stopNavigation()
+                }
+
+                override fun onActivateEmergencyMode() {
+                    // TODO: Trigger emergency SMS/call from MainActivity
+                    android.util.Log.d("MapScreen", "Emergency mode activated")
+                }
+            }
+
+        // Construct the manager with application context and handler
+        com.example.lakbaylaya.ui.screens.map.navigation.voice.NavigationVoiceManager(
+            context.applicationContext as android.app.Application,
+            handler
+        )
+    }
+
+    // Voice command state for toggleable mic
+    var isVoiceCommandActive by remember { mutableStateOf(false) }
+    // Retry state for navigation voice commands
+    val navVoiceRetries = remember { mutableStateOf(0) }
+    val maxNavVoiceRetries = 2
+    // Flag to request relaunching the navigation voice recognizer from outside the launcher callback
+    val navRelaunchFlag = remember { mutableStateOf(false) }
+
+    // Speech recognizer launcher for voice commands during navigation
+    val navVoiceSpeechLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        // Do NOT reset the active flag here — keep the mic toggle ON while TTS/auto-retry runs.
+
+        // Helper vibrator function
+        fun vibrateShort() {
+            try {
+                val vibrator = context.getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
+                vibrator?.let {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                        it.vibrate(
+                            VibrationEffect.createOneShot(
+                                120,
+                                VibrationEffect.DEFAULT_AMPLITUDE
+                            )
+                        )
+                    } else {
+                        @Suppress("DEPRECATION")
+                        it.vibrate(120)
+                    }
+                }
+            } catch (e: Exception) {
+                android.util.Log.w("MapScreen", "Vibration failed: ${e.message}")
+            }
+        }
+
+        when (result.resultCode) {
+            android.app.Activity.RESULT_OK -> {
+                val data = result.data
+                val matches = data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)
+                val recognizedText = matches?.firstOrNull { it.isNotBlank() }?.trim() ?: ""
+
+                if (recognizedText.isNotBlank()) {
+                    android.util.Log.d("MapScreen", "Voice command: '$recognizedText'")
+
+                    // Process voice command using NavigationVoiceManager
+                    val currentNav = state.navigationState
+                    if (currentNav is NavigationState.Active) {
+                        // Estimate remaining distance (fallback)
+                        var remainingDistance = 0.0
+                        state.directionData?.routes?.firstOrNull()?.let { route ->
+                            remainingDistance = 1000.0
+                        }
+
+                        val command = navigationVoiceManager.processVoiceCommand(
+                            transcript = recognizedText,
+                            currentLocationLat = state.currentLocation?.latitude ?: 0.0,
+                            currentLocationLng = state.currentLocation?.longitude ?: 0.0,
+                            distanceToDestination = remainingDistance
+                        )
+
+                        // If command not recognized, retry a couple times with TTS + vibration
+                        if (command is VoiceCommand.UnknownCommand) {
+                            // Use a retry counter stored in remember
+                            navVoiceRetries.value =
+                                (navVoiceRetries.value + 1).coerceAtMost(maxNavVoiceRetries)
+
+                            if (navVoiceRetries.value <= maxNavVoiceRetries) {
+                                // Speak a short retry prompt
+                                navigationVoiceManager.speak("Sorry, I didn't catch that. Please say the command again.")
+                                vibrateShort()
+
+                                // Relaunch recognizer after a short delay to give user time
+                                // Request a relaunch via LaunchedEffect below (can't reference launcher inside its own initializer)
+                                // Only relaunch if the mic is still active
+                                if (isVoiceCommandActive) navRelaunchFlag.value = true
+                            } else {
+                                navigationVoiceManager.speak("Sorry, I couldn't understand. Try again later.")
+                                navVoiceRetries.value = 0
+                                // end voice mode after exhausted retries
+                                isVoiceCommandActive = false
+                            }
+                        } else {
+                            // Successful recognition - reset retry counter and provide haptic confirmation
+                            navVoiceRetries.value = 0
+                            vibrateShort()
+                            // Keep mic active (user explicitly toggles off)
+                        }
+                    }
+                } else {
+                    // No speech recognized - give feedback and offer retry
+                    android.util.Log.d("MapScreen", "Voice command result was empty")
+                    navigationVoiceManager.speak("No speech detected. Please say the command again.")
+                    // vibrate and relaunch up to retry limit
+                    navVoiceRetries.value =
+                        (navVoiceRetries.value + 1).coerceAtMost(maxNavVoiceRetries)
+                    if (navVoiceRetries.value <= maxNavVoiceRetries) {
+                        vibrateShort()
+                        // Request relaunch via LaunchedEffect (only if mic still active)
+                        if (isVoiceCommandActive) navRelaunchFlag.value = true
+                    } else {
+                        navigationVoiceManager.speak("No input detected. Cancelling voice command mode.")
+                        navVoiceRetries.value = 0
+                        isVoiceCommandActive = false
+                    }
+                }
+            }
+
+            android.app.Activity.RESULT_CANCELED -> {
+                android.util.Log.d("MapScreen", "Voice command cancelled")
+                // reset retries and turn mic off — user likely dismissed recognizer
+                navVoiceRetries.value = 0
+                isVoiceCommandActive = false
+            }
+
+            else -> {
+                android.util.Log.e(
+                    "MapScreen",
+                    "Voice command failed with code: ${result.resultCode}"
+                )
+                navVoiceRetries.value = 0
+            }
+        }
+    }
+
+    // Mic permission launcher for voice commands during navigation
+    val navMicPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) {
+            // Permission granted: mark mic active and launch recognizer
+            isVoiceCommandActive = true
+            composeScope.launch {
+                navigationVoiceManager.speakListeningPrompt()
+                delay(500)
+                launchNavigationVoiceCommand(context, navVoiceSpeechLauncher)
+            }
+        } else {
+            isVoiceCommandActive = false
+            android.util.Log.w("MapScreen", "Microphone permission denied for voice commands")
+        }
+    }
+
     // Initialize TTS when needed
     LaunchedEffect(Unit) {
         ttsEngine.initialize(
@@ -311,6 +544,7 @@ fun MapScreen(
             stepDetector.stop()
             ttsEngine.shutdown()
             locationTracker.stopTracking()
+            navigationVoiceManager.shutdown()
         }
     }
 
@@ -634,7 +868,8 @@ fun MapScreen(
         )
 
         // Search overlay - only visible when search is active AND NOT in Direction Mode (or editing stops)
-        if (state.isSearchOverlayActive && !showMarkerDialog) {
+        // Also hide the overlay while the marker editor is active so its OK/Cancel controls remain visible
+        if (state.isSearchOverlayActive && !showMarkerDialog && !state.isMarkerEditing) {
             Column(
                 modifier = Modifier
                     .fillMaxSize()
@@ -761,6 +996,32 @@ fun MapScreen(
                     onMuteToggle = {
                         vm.toggleNavigationMute()
                     },
+                    isVoiceActive = isVoiceCommandActive,
+                    onVoiceToggle = {
+                        isVoiceCommandActive = !isVoiceCommandActive
+
+                        if (isVoiceCommandActive) {
+                            // Check microphone permission and launch voice command recognizer
+                            val hasPermission =
+                                android.content.pm.PackageManager.PERMISSION_GRANTED ==
+                                        androidx.core.content.ContextCompat.checkSelfPermission(
+                                            context,
+                                            android.Manifest.permission.RECORD_AUDIO
+                                        )
+
+                            if (hasPermission) {
+                                composeScope.launch {
+                                    navigationVoiceManager.speakListeningPrompt()
+                                    delay(500)
+                                    launchNavigationVoiceCommand(context, navVoiceSpeechLauncher)
+                                }
+                            } else {
+                                navMicPermissionLauncher.launch(android.Manifest.permission.RECORD_AUDIO)
+                            }
+                        } else {
+                            navigationVoiceManager.stop()
+                        }
+                    },
                     onCenterToggle = {
                         // Toggle center-on-location mode
                         isCenterOnLocation = !isCenterOnLocation
@@ -776,6 +1037,7 @@ fun MapScreen(
                             }
                         }
                     },
+                    useVoiceCommand = true,
                     modifier = Modifier
                         .align(Alignment.CenterEnd)
                         .padding(end = 16.dp, bottom = 200.dp)
@@ -814,7 +1076,7 @@ fun MapScreen(
                 // DIRECTION MODE: Show Overlay Stop Panel instead (unless sheet is full expanded)
                 val isDirectionFullExpanded = state.bottomSheetState is BottomSheetState.DirectionFullExpand
 
-                if (isDirectionMode && !isDirectionFullExpanded) {
+                if (isDirectionMode && !isDirectionFullExpanded && !state.isMarkerEditing) {
                     // Overlay Stop Panel (replaces search bar in Direction Mode, hidden when full expanded)
                     state.directionData?.let { currentDirectionData ->
                         OverlayStopPanel(
@@ -853,7 +1115,7 @@ fun MapScreen(
                     }
                 } else if (!isDirectionMode) {
                     // Normal Mode: Search bar at top
-                    if (!showMarkerDialog) {
+                    if (!showMarkerDialog && !state.isMarkerEditing) {
                         FloatingSearchBar(
                             query = state.searchQuery,
                             isOverlayActive = state.isSearchOverlayActive,
@@ -905,7 +1167,9 @@ fun MapScreen(
                     // Normal Mode: Show appropriate sheet
 
                     // User location sheet (shown when no search and no place selected)
-                    val showUserLocationSheet = state.bottomSheetState is BottomSheetState.Hidden
+                    // Hide the user location sheet while marker editor is active so it doesn't cover the editor controls
+                    val showUserLocationSheet =
+                        (state.bottomSheetState is BottomSheetState.Hidden) && !state.isMarkerEditing
 
                     UserLocationBottomSheet(
                         isVisible = showUserLocationSheet,
@@ -924,7 +1188,7 @@ fun MapScreen(
                     // Place sheet (when place is selected)
                     if ((state.bottomSheetState !is BottomSheetState.Hidden &&
                         state.bottomSheetState !is BottomSheetState.DirectionInitial &&
-                                state.bottomSheetState !is BottomSheetState.DirectionFullExpand) && !showMarkerDialog
+                                state.bottomSheetState !is BottomSheetState.DirectionFullExpand) && !showMarkerDialog && !state.isMarkerEditing
                     ) {
                         PlaceBottomSheet(
                             sheetState = state.bottomSheetState,
@@ -1081,6 +1345,7 @@ fun MapScreen(
             com.example.lakbaylaya.ui.screens.map.components.markerEdit.MarkerLocationEditorDialog(
                 isVisible = true,
                 mapManager = mapManager,
+                initialResult = state.markerEditingResult,
                 onLocationSelected = { latitude, longitude, address ->
                     vm.onMarkerEditConfirmed(latitude, longitude, address)
                 },
@@ -1192,6 +1457,61 @@ private fun launchSpeechRecognizer(
         android.util.Log.e("MapScreen", "Failed to launch speech recognizer: ${e.message}", e)
         Toast.makeText(context, "Voice input error: ${e.message}", Toast.LENGTH_SHORT).show()
         vm.stopVoiceListening()
+    }
+}
+
+/**
+ * Launch the navigation voice command recognizer during active navigation
+ *
+ * Configured for voice commands with shorter timeouts and specific intent
+ */
+private fun launchNavigationVoiceCommand(
+    context: android.content.Context,
+    launcher: androidx.activity.result.ActivityResultLauncher<Intent>
+) {
+    try {
+        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+            putExtra(
+                RecognizerIntent.EXTRA_LANGUAGE_MODEL,
+                RecognizerIntent.LANGUAGE_MODEL_WEB_SEARCH
+            )
+
+            val deviceLocale = java.util.Locale.getDefault()
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE, deviceLocale.toLanguageTag())
+
+            putExtra(
+                RecognizerIntent.EXTRA_PROMPT,
+                "🎤 Voice Command: repeat, pause, resume, distance, or emergency"
+            )
+
+            // Shorter timeouts for navigation commands (user expects quick response)
+            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 2000L)
+            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 3000L)
+            putExtra(
+                RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS,
+                1500L
+            )
+
+            putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
+            putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
+            putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, false)
+        }
+
+        val pm = context.packageManager
+        val activities = pm.queryIntentActivities(intent, 0)
+
+        if (activities.isNotEmpty()) {
+            launcher.launch(intent)
+            android.util.Log.d("MapScreen", "Navigation voice command recognizer launched")
+        } else {
+            android.util.Log.e("MapScreen", "No voice recognizer available for navigation commands")
+        }
+    } catch (e: Exception) {
+        android.util.Log.e(
+            "MapScreen",
+            "Failed to launch navigation voice command: ${e.message}",
+            e
+        )
     }
 }
 

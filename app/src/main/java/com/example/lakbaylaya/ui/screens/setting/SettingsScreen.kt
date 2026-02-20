@@ -74,6 +74,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.edit
 import androidx.lifecycle.viewmodel.compose.viewModel
 
 @Composable
@@ -473,6 +474,10 @@ private fun SafetySection(
     onEditMessage: () -> Unit,
     onToggleAutoArrival: () -> Unit
 ) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val prefs = context.getSharedPreferences("app_prefs", android.content.Context.MODE_PRIVATE)
+    var useGateway by remember { mutableStateOf(prefs.getBoolean("use_sms_gateway", false)) }
+
     SectionCard(
         title = "Safety & Emergency",
         titleDescription = "Safety and Emergency settings section.",
@@ -587,6 +592,21 @@ private fun SafetySection(
             isEnabled = settings.autoSendArrivalNotification,
             onToggle = onToggleAutoArrival,
             accessibilityDescription = if (settings.autoSendArrivalNotification) "Auto-send arrival notification is enabled. Tap to disable." else "Auto-send arrival notification is disabled. Tap to enable."
+        )
+
+        Spacer(modifier = Modifier.height(12.dp))
+
+        // New toggle: Use SMS Gateway
+        SettingToggleRow(
+            icon = Icons.Default.Phone,
+            title = "Use SMS Gateway",
+            description = "Send emergency messages via configured SMS gateway instead of device SMS",
+            isEnabled = useGateway,
+            onToggle = {
+                useGateway = !useGateway
+                prefs.edit { putBoolean("use_sms_gateway", useGateway) }
+            },
+            accessibilityDescription = if (useGateway) "Sending via SMS gateway is enabled." else "Sending via device SMS by default."
         )
     }
 }
@@ -1019,4 +1039,3 @@ private fun ConfirmationDialog(
 fun SettingsScreenPreview() {
     SettingsScreen()
 }
-

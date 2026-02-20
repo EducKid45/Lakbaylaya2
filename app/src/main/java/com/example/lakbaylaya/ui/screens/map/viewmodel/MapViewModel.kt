@@ -14,6 +14,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
 
 /**
  * Factory for creating MapViewModel with Application context
@@ -60,6 +61,9 @@ class MapViewModel(
         private const val DEBOUNCE_DELAY_MS = 300L
         private const val MIN_DISTANCE_FOR_UPDATE_METERS = 50.0 // Don't update if moved less than 50m
     }
+
+    // TTS manager used to speak the final recognized search phrase ("Searching for ...")
+    private val voiceManager by lazy { com.example.lakbaylaya.voice.VoiceManager(getApplication()) }
 
     // Mutable state
     private val _state = MutableStateFlow(MapState())
@@ -129,19 +133,44 @@ class MapViewModel(
     /** Voice recognition integration - update listening flag and accept voice transcripts */
     fun startVoiceListening() {
         _state.update { it.copy(isVoiceListening = true, isSearchOverlayActive = true) }
+        // TTS prompt moved to SpeechRecognitionManager.onReadyForSpeech() when using SpeechRecognizer,
+        // but MapScreen uses the system activity recognizer, so provide an explicit cue method below.
+    }
+
+    fun playListeningCue() {
+        try {
+            voiceManager.speak("I'm listening")
+        } catch (e: Exception) {
+            android.util.Log.w("MapViewModel", "TTS listening cue failed: ${e.message}")
+        }
     }
 
     fun stopVoiceListening() {
         _state.update { it.copy(isVoiceListening = false) }
+        // SpeechRecognitionManager will stop TTS when recognition ends or is cancelled if used.
     }
 
     /** Called when voice recognizer returns text. If final, we set the search query and trigger search flow. */
     fun onVoiceResult(text: String, isFinal: Boolean) {
         if (isFinal) {
-            // Set the search query and trigger search immediately
+            // Update UI immediately
             _state.update { it.copy(searchQuery = text, isVoiceListening = false) }
-            // Trigger search manager directly so it doesn't wait for debounce when voice provides final result
-            searchManager.onSearchQueryChange(text)
+
+            // Speak the phrase we will search for, then trigger the actual search after a short delay
+            viewModelScope.launch {
+                try {
+                    // Use TTS to confirm/search phrase vocally
+                    voiceManager.speak("Searching for $text")
+                } catch (e: Exception) {
+                    android.util.Log.w("MapViewModel", "TTS speak failed: ${e.message}")
+                }
+
+                // Small delay to let the spoken phrase start before triggering network search
+                delay(450)
+
+                // Trigger search manager after speaking
+                searchManager.onSearchQueryChange(text)
+            }
         } else {
             // Update query shown in UI but don't trigger debounced search for partials
             _state.update {
@@ -218,13 +247,17 @@ class MapViewModel(
      * Clears the selected marker so search icon disappears during editing
      */
     fun onSearchResultMarkerEdit(result: SearchResult) {
+        android.util.Log.d(
+            "MapViewModel",
+            "onSearchResultMarkerEdit: opening editor for ${result.placeName} at ${result.latitude},${result.longitude}"
+        )
         _state.update {
             it.copy(
                 isSearchOverlayActive = false, // Close search overlay
                 isMarkerEditing = true, // Open marker editor
                 markerEditingResult = result, // Store result being edited
                 searchUiState = SearchUiState.Idle,
-                selectedMarker = null, // Clear marker icon during editing
+                selectedMarker = result, // Show marker icon during editing so the pin is visible
                 bottomSheetState = BottomSheetState.Hidden // Hide bottom sheet during editing
             )
         }
@@ -235,6 +268,10 @@ class MapViewModel(
                 latitude = result.latitude,
                 longitude = result.longitude,
                 zoom = 17.0
+            )
+            android.util.Log.d(
+                "MapViewModel",
+                "onSearchResultMarkerEdit: animated to ${result.latitude},${result.longitude}"
             )
         }
     }
@@ -289,6 +326,10 @@ class MapViewModel(
      * Also handles updating stops in Direction mode
      */
     fun onMarkerEditConfirmed(latitude: Double, longitude: Double, address: String) {
+        android.util.Log.d(
+            "MapViewModel",
+            "onMarkerEditConfirmed: confirmed at $latitude,$longitude ($address)"
+        )
         val editingResult = _state.value.markerEditingResult ?: return
         val editingStopIndex = _state.value.editingStopIndex
 
@@ -308,17 +349,27 @@ class MapViewModel(
         // Add updated result to recent searches
         val updatedRecent = searchManager.addToRecentSearches(updatedResult)
 
-        // Close marker editor and show place bottom sheet with updated location
+        // Close marker editor. Show the place bottom sheet with the updated location so the user
+        // can see place details and confirm/cancel actions after re-marking.
         _state.update {
             it.copy(
                 isMarkerEditing = false,
                 markerEditingResult = null,
                 selectedResult = updatedResult,
                 selectedMarker = updatedResult, // Show marker at new position
-                bottomSheetState = BottomSheetState.Initial(updatedResult), // Refresh bottom sheet with new data
+                // Show the place sheet reflecting the new coordinates and details
+                bottomSheetState = BottomSheetState.Initial(updatedResult),
+                // Ensure search overlay and typing state are cleared
+                isSearchOverlayActive = false,
+                searchQuery = "",
+                searchUiState = SearchUiState.Idle,
                 recentSearches = updatedRecent // Update recent searches
             )
         }
+        android.util.Log.d(
+            "MapViewModel",
+            "onMarkerEditConfirmed: state updated; bottomSheetState=Initial with ${updatedResult.latitude},${updatedResult.longitude}"
+        )
     }
 
     /**
@@ -775,6 +826,12 @@ class MapViewModel(
         super.onCleared()
         stopLocationUpdates()
         navigationManager.stopNavigation()
+        // Shutdown voice manager used by this ViewModel
+        try {
+            voiceManager.shutdown()
+        } catch (e: Exception) {
+            android.util.Log.w("MapViewModel", "TTS shutdown failed: ${e.message}")
+        }
     }
 
     /**

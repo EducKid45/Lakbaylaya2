@@ -3,8 +3,6 @@ package com.example.lakbaylaya.emergency
 import android.Manifest
 import android.app.Activity
 import android.location.Location
-import android.net.Uri
-import android.content.Intent
 import android.os.Looper
 import android.widget.Toast
 import androidx.activity.result.ActivityResultLauncher
@@ -15,48 +13,36 @@ import com.google.android.gms.location.LocationRequest
 import com.google.android.gms.location.LocationResult
 import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
+import android.util.Log
 
 /**
- * EmergencyManager: one-tap emergency flow using the system SMS composer (pre-filled).
- * Implements EmergencyHandler for interchangeable usage.
+ * EmergencySmsGateway: one-tap emergency flow that sends SMS using a provided SmsSender
+ * (for example, SemaphoreSmsSender). This class fetches location (if permitted) and sends
+ * the composed emergency message via the gateway.
  */
-class EmergencyManager(
+class EmergencySmsGateway(
     private val activity: Activity,
     private val emergencyNumber: String,
+    private val smsSender: SmsSender,
     private val permissionLauncher: ActivityResultLauncher<Array<String>>? = null,
     private val onResult: ((success: Boolean, message: String) -> Unit)? = null
 ) : EmergencyHandler {
-
     private val fusedClient: FusedLocationProviderClient by lazy {
         LocationServices.getFusedLocationProviderClient(activity)
     }
 
     companion object {
-        const val REQUEST_PERMISSIONS_CODE = 1420
+        const val REQUEST_PERMISSIONS_CODE = 1421
+        private const val TAG = "EmergencySmsGateway"
     }
 
-    // One-tap entry point
     override fun sendEmergencySms() {
         if (!hasLocationPermission()) {
             requestPermissions()
             return
         }
 
-        fetchLocationAndOpenSmsComposer()
-    }
-
-    /**
-     * Call this from your ActivityResult launcher (RequestMultiplePermissions) result map.
-     */
-    override fun onPermissionResults(results: Map<String, Boolean>) {
-        val grantedLocation = results[Manifest.permission.ACCESS_FINE_LOCATION] == true
-        if (grantedLocation) {
-            fetchLocationAndOpenSmsComposer()
-        } else {
-            val msg = "Location permission denied: unable to prepare emergency message"
-            notifyResult(false, msg)
-            Toast.makeText(activity, msg, Toast.LENGTH_LONG).show()
-        }
+        fetchLocationAndSend()
     }
 
     private fun hasLocationPermission(): Boolean {
@@ -73,15 +59,29 @@ class EmergencyManager(
         }
     }
 
-    private fun fetchLocationAndOpenSmsComposer() {
+    /**
+     * Call this from your ActivityResult launcher (RequestMultiplePermissions) result map.
+     */
+    override fun onPermissionResults(results: Map<String, Boolean>) {
+        val grantedLocation = results[Manifest.permission.ACCESS_FINE_LOCATION] == true
+        if (grantedLocation) {
+            fetchLocationAndSend()
+        } else {
+            val msg = "Location permission denied: unable to prepare emergency message"
+            notifyResult(false, msg)
+            Toast.makeText(activity, msg, Toast.LENGTH_LONG).show()
+        }
+    }
+
+    private fun fetchLocationAndSend() {
         try {
             fusedClient.lastLocation.addOnSuccessListener { location: Location? ->
                 if (location != null) {
-                    openSmsComposerWithLocation(location)
+                    sendWithLocation(location)
                 } else {
                     requestSingleLocationUpdate()
                 }
-            }.addOnFailureListener {
+            }.addOnFailureListener { _ ->
                 requestSingleLocationUpdate()
             }
         } catch (_: SecurityException) {
@@ -101,10 +101,10 @@ class EmergencyManager(
             override fun onLocationResult(result: LocationResult) {
                 val loc = result.lastLocation
                 if (loc != null) {
-                    openSmsComposerWithLocation(loc)
+                    sendWithLocation(loc)
                 } else {
-                    // If we still couldn't obtain location, open composer with fallback text
-                    openSmsComposerWithFallback()
+                    // If still unavailable, send with fallback text
+                    sendWithFallback()
                 }
                 fusedClient.removeLocationUpdates(this)
             }
@@ -119,43 +119,36 @@ class EmergencyManager(
         }
     }
 
-    private fun openSmsComposerWithLocation(location: Location) {
+    private fun sendWithLocation(location: Location) {
         val lat = location.latitude
         val lng = location.longitude
         val mapsLink = "https://maps.google.com/?q=$lat,$lng"
         val message = "EMERGENCY: I need help. My location: $mapsLink"
-
-        openSmsComposer(message)
+        sendMessageToGateway(message)
     }
 
-    private fun openSmsComposerWithFallback() {
+    private fun sendWithFallback() {
         val message = "EMERGENCY: I need help. My location is unavailable."
-        openSmsComposer(message)
+        sendMessageToGateway(message)
     }
 
-    private fun openSmsComposer(message: String) {
-        try {
-            val uri = Uri.parse("smsto:${Uri.encode(emergencyNumber)}")
-            val intent = Intent(Intent.ACTION_SENDTO, uri).apply {
-                putExtra("sms_body", message)
-            }
-
-            // Verify there's an app to handle the intent
-            if (intent.resolveActivity(activity.packageManager) != null) {
-                activity.startActivity(intent)
-                val okMsg = "Opened messaging app"
+    private fun sendMessageToGateway(message: String) {
+        val sender = SendSmsManager(activity, smsSender)
+        sender.send(emergencyNumber, message, object : SmsCallback {
+            override fun onSuccess(response: String?) {
+                val okMsg = "Emergency SMS sent via gateway"
                 notifyResult(true, okMsg)
                 Toast.makeText(activity, okMsg, Toast.LENGTH_SHORT).show()
-            } else {
-                val err = "No SMS app available"
+                Log.d(TAG, "Gateway send success: $response")
+            }
+
+            override fun onFailure(errorMessage: String) {
+                val err = "Gateway SMS failed: $errorMessage"
                 notifyResult(false, err)
                 Toast.makeText(activity, err, Toast.LENGTH_LONG).show()
+                Log.e(TAG, err)
             }
-        } catch (e: Exception) {
-            val err = "Failed to open messaging app: ${e.message}"
-            notifyResult(false, err)
-            Toast.makeText(activity, err, Toast.LENGTH_LONG).show()
-        }
+        })
     }
 
     private fun notifyResult(success: Boolean, message: String) {

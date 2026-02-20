@@ -69,7 +69,7 @@ class PolylineManager {
             val lineColor = color ?: if (isPrimary) {
                 "#2196F3".toColorInt()
             } else {
-                "#9E9E9E".toColorInt()
+                "#3d94d7".toColorInt()
             }
             val lineWidth = if (isPrimary) 5f else 4f
             val dashArray = if (isPrimary) arrayOf(2f, 2f) else arrayOf(1f, 2f)

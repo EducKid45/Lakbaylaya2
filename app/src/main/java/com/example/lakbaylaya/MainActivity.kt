@@ -25,7 +25,12 @@ import com.example.lakbaylaya.maplibre.manager.MapLibreManager
 import com.example.lakbaylaya.ui.screens.onboarding.WelcomeOnboardingScreen
 import com.example.lakbaylaya.ui.screens.onboarding.ProfileSetupOnboardingScreen
 import androidx.core.content.edit
+import com.example.lakbaylaya.emergency.EmergencyHandler
 import com.example.lakbaylaya.emergency.EmergencyManager
+import com.example.lakbaylaya.emergency.EmergencySmsGateway
+import com.example.lakbaylaya.emergency.SemaphoreSmsSender
+import android.content.pm.PackageManager
+import android.util.Log
 
 /**
  * MainActivity - Main entry point of the app
@@ -63,6 +68,7 @@ import com.example.lakbaylaya.emergency.EmergencyManager
  * - Respects system reduce motion preference
  */
 class MainActivity : ComponentActivity() {
+    // Creates a button that mimics a crash when pressed
     private enum class OnboardingState { NONE, WELCOME, PROFILE }
 
     // Permission request launcher for Bluetooth
@@ -73,12 +79,13 @@ class MainActivity : ComponentActivity() {
         PermissionResultHandler.setResults(results)
     }
 
-    // Emergency manager instance (handles permissions, location, SMS sending)
-    private lateinit var emergencyManager: EmergencyManager
+    // Emergency handler instance (either EmergencyManager or EmergencySmsGateway)
+    private lateinit var emergencyHandler: EmergencyHandler
 
     companion object {
         // Replace with your predefined emergency contact number (E.164 recommended)
         const val EMERGENCY_NUMBER = "+1234567890"
+        const val TAG = "MainActivity"
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -94,16 +101,41 @@ class MainActivity : ComponentActivity() {
         val emergencyPermissionLauncher = registerForActivityResult(
             ActivityResultContracts.RequestMultiplePermissions()
         ) { results ->
-            // Forward results to emergency manager (will be initialized below)
-            emergencyManager.onPermissionResults(results)
+            // Forward results to the selected emergency handler
+            if (::emergencyHandler.isInitialized) emergencyHandler.onPermissionResults(results)
         }
 
-        // Initialize EmergencyManager - provide the emergency permission launcher
-        // Initialize EmergencyManager (on-device SMS). Pass the permission launcher.
-        emergencyManager = EmergencyManager(this, EMERGENCY_NUMBER, emergencyPermissionLauncher)
-
-        // Get simple preferences to track whether onboarding was completed
+        // Decide which emergency backend to use based on SharedPreferences flag
         val prefs = getSharedPreferences("app_prefs", MODE_PRIVATE)
+        val useGateway = prefs.getBoolean("use_sms_gateway", false)
+
+        if (useGateway) {
+            // Try to read the Semaphore API Key from manifest meta-data (or fallback placeholder)
+            val apiKey = try {
+                val appInfo =
+                    packageManager.getApplicationInfo(packageName, PackageManager.GET_META_DATA)
+                appInfo.metaData?.getString("SEMAPHORE_API_KEY") ?: ""
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to read SEMAPHORE_API_KEY from manifest: ${e.message}")
+                ""
+            }
+
+            if (apiKey.isEmpty()) {
+                Log.w(
+                    TAG,
+                    "SMS gateway enabled but API key is missing; falling back to device flow"
+                )
+                emergencyHandler =
+                    EmergencyManager(this, EMERGENCY_NUMBER, emergencyPermissionLauncher)
+            } else {
+                val sender = SemaphoreSmsSender(apiKey)
+                emergencyHandler =
+                    EmergencySmsGateway(this, EMERGENCY_NUMBER, sender, emergencyPermissionLauncher)
+            }
+        } else {
+            // Use device composer / device SMS flow
+            emergencyHandler = EmergencyManager(this, EMERGENCY_NUMBER, emergencyPermissionLauncher)
+        }
 
         setContent {
             LakbaylayaTheme {
@@ -150,7 +182,7 @@ class MainActivity : ComponentActivity() {
                         MainAppHost(
                             activity = this@MainActivity,
                             permissionLauncher = permissionLauncher,
-                            onEmergency = { emergencyManager.sendEmergencySms() }
+                            onEmergency = { emergencyHandler.sendEmergencySms() }
                         )
                     }
                 }
