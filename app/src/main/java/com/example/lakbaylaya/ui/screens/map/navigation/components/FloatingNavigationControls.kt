@@ -22,7 +22,7 @@ import androidx.compose.ui.unit.dp
  * requiring the user to open menus.
  *
  * Features:
- * - Mute/Unmute toggle for voice guidance
+ * - Voice command toggle (toggleable mic for hands-free navigation)
  * - Center-on-location toggle (replaces 2D/3D toggle and custom compass button)
  *
  * Note: The built-in MapLibre compass UI is used for device orientation
@@ -30,46 +30,82 @@ import androidx.compose.ui.unit.dp
  */
 @Composable
 fun FloatingNavigationControls(
-    isMuted: Boolean,
+    isMuted: Boolean = false,
     isCentered: Boolean,
-    onMuteToggle: () -> Unit,
+    onMuteToggle: () -> Unit = {},
     onCenterToggle: () -> Unit,
-    modifier: Modifier = Modifier
+    isVoiceActive: Boolean = false,
+    onVoiceToggle: () -> Unit = {},
+    modifier: Modifier = Modifier,
+    useVoiceCommand: Boolean = true
 ) {
     Column(
         modifier = modifier,
         verticalArrangement = Arrangement.spacedBy(12.dp),
         horizontalAlignment = Alignment.End
     ) {
-        // Mute/Unmute toggle
-        FloatingActionButton(
-            onClick = onMuteToggle,
-            containerColor = if (isMuted) {
-                MaterialTheme.colorScheme.errorContainer
-            } else {
-                MaterialTheme.colorScheme.primaryContainer
-            },
-            contentColor = if (isMuted) {
-                MaterialTheme.colorScheme.error
-            } else {
-                MaterialTheme.colorScheme.primary
-            },
-            modifier = Modifier
-                .size(56.dp)
-                .shadow(4.dp, CircleShape)
-                .semantics {
-                    contentDescription = if (isMuted) {
-                        "Voice guidance muted. Tap to unmute."
-                    } else {
-                        "Voice guidance active. Tap to mute."
+        // Voice command toggle mic button (replaces mute button)
+        if (useVoiceCommand) {
+            FloatingActionButton(
+                onClick = onVoiceToggle,
+                containerColor = if (isVoiceActive) {
+                    MaterialTheme.colorScheme.tertiaryContainer
+                } else {
+                    MaterialTheme.colorScheme.primaryContainer
+                },
+                contentColor = if (isVoiceActive) {
+                    MaterialTheme.colorScheme.tertiary
+                } else {
+                    MaterialTheme.colorScheme.primary
+                },
+                modifier = Modifier
+                    .size(56.dp)
+                    .shadow(4.dp, CircleShape)
+                    .semantics {
+                        contentDescription = if (isVoiceActive) {
+                            "Voice command active. Speak a command. Tap to stop listening."
+                        } else {
+                            "Voice command inactive. Tap to start voice commands."
+                        }
                     }
-                }
-        ) {
-            Icon(
-                imageVector = if (isMuted) Icons.AutoMirrored.Filled.VolumeOff else Icons.AutoMirrored.Filled.VolumeUp,
-                contentDescription = null,
-                modifier = Modifier.size(28.dp)
-            )
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Mic,
+                    contentDescription = null,
+                    modifier = Modifier.size(28.dp)
+                )
+            }
+        } else {
+            // Fallback: Mute/Unmute toggle if voice commands not enabled
+            FloatingActionButton(
+                onClick = onMuteToggle,
+                containerColor = if (isMuted) {
+                    MaterialTheme.colorScheme.errorContainer
+                } else {
+                    MaterialTheme.colorScheme.primaryContainer
+                },
+                contentColor = if (isMuted) {
+                    MaterialTheme.colorScheme.error
+                } else {
+                    MaterialTheme.colorScheme.primary
+                },
+                modifier = Modifier
+                    .size(56.dp)
+                    .shadow(4.dp, CircleShape)
+                    .semantics {
+                        contentDescription = if (isMuted) {
+                            "Voice guidance muted. Tap to unmute."
+                        } else {
+                            "Voice guidance active. Tap to mute."
+                        }
+                    }
+            ) {
+                Icon(
+                    imageVector = if (isMuted) Icons.AutoMirrored.Filled.VolumeOff else Icons.AutoMirrored.Filled.VolumeUp,
+                    contentDescription = null,
+                    modifier = Modifier.size(28.dp)
+                )
+            }
         }
 
         // Center-on-location toggle (replaces custom compass & 2D/3D)
@@ -81,7 +117,8 @@ fun FloatingNavigationControls(
                 .size(56.dp)
                 .shadow(4.dp, CircleShape)
                 .semantics {
-                    contentDescription = if (isCentered) "Following your location" else "Center on my location"
+                    contentDescription =
+                        if (isCentered) "Following your location" else "Center on my location"
                 }
         ) {
             Icon(
@@ -98,41 +135,72 @@ fun FloatingNavigationControls(
  */
 @Composable
 fun CompactFloatingNavigationControls(
-    isMuted: Boolean,
+    isMuted: Boolean = false,
     isCentered: Boolean,
-    onMuteToggle: () -> Unit,
+    onMuteToggle: () -> Unit = {},
     onCenterToggle: () -> Unit,
-    modifier: Modifier = Modifier
+    isVoiceActive: Boolean = false,
+    onVoiceToggle: () -> Unit = {},
+    modifier: Modifier = Modifier,
+    useVoiceCommand: Boolean = true
 ) {
     Column(
         modifier = modifier,
         verticalArrangement = Arrangement.spacedBy(8.dp),
         horizontalAlignment = Alignment.End
     ) {
-        // Smaller FABs
-        SmallFloatingActionButton(
-            onClick = onMuteToggle,
-            containerColor = if (isMuted) {
-                MaterialTheme.colorScheme.errorContainer
-            } else {
-                MaterialTheme.colorScheme.primaryContainer
-            },
-            contentColor = if (isMuted) {
-                MaterialTheme.colorScheme.error
-            } else {
-                MaterialTheme.colorScheme.primary
-            },
-            modifier = Modifier
-                .shadow(3.dp, CircleShape)
-                .semantics {
-                    contentDescription = if (isMuted) "Unmute" else "Mute"
-                }
-        ) {
-            Icon(
-                imageVector = if (isMuted) Icons.AutoMirrored.Filled.VolumeOff else Icons.AutoMirrored.Filled.VolumeUp,
-                contentDescription = null,
-                modifier = Modifier.size(20.dp)
-            )
+        // Voice command toggle mic button (compact version)
+        if (useVoiceCommand) {
+            SmallFloatingActionButton(
+                onClick = onVoiceToggle,
+                containerColor = if (isVoiceActive) {
+                    MaterialTheme.colorScheme.tertiaryContainer
+                } else {
+                    MaterialTheme.colorScheme.primaryContainer
+                },
+                contentColor = if (isVoiceActive) {
+                    MaterialTheme.colorScheme.tertiary
+                } else {
+                    MaterialTheme.colorScheme.primary
+                },
+                modifier = Modifier
+                    .shadow(3.dp, CircleShape)
+                    .semantics {
+                        contentDescription = if (isVoiceActive) "Voice active" else "Voice inactive"
+                    }
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Mic,
+                    contentDescription = null,
+                    modifier = Modifier.size(20.dp)
+                )
+            }
+        } else {
+            // Fallback: Mute/Unmute toggle (compact)
+            SmallFloatingActionButton(
+                onClick = onMuteToggle,
+                containerColor = if (isMuted) {
+                    MaterialTheme.colorScheme.errorContainer
+                } else {
+                    MaterialTheme.colorScheme.primaryContainer
+                },
+                contentColor = if (isMuted) {
+                    MaterialTheme.colorScheme.error
+                } else {
+                    MaterialTheme.colorScheme.primary
+                },
+                modifier = Modifier
+                    .shadow(3.dp, CircleShape)
+                    .semantics {
+                        contentDescription = if (isMuted) "Unmute" else "Mute"
+                    }
+            ) {
+                Icon(
+                    imageVector = if (isMuted) Icons.AutoMirrored.Filled.VolumeOff else Icons.AutoMirrored.Filled.VolumeUp,
+                    contentDescription = null,
+                    modifier = Modifier.size(20.dp)
+                )
+            }
         }
 
         SmallFloatingActionButton(
@@ -142,7 +210,8 @@ fun CompactFloatingNavigationControls(
             modifier = Modifier
                 .shadow(3.dp, CircleShape)
                 .semantics {
-                    contentDescription = if (isCentered) "Following your location" else "Center on my location"
+                    contentDescription =
+                        if (isCentered) "Following your location" else "Center on my location"
                 }
         ) {
             Icon(

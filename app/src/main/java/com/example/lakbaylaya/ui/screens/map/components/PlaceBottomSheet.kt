@@ -13,7 +13,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.DirectionsWalk
-import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -36,7 +35,7 @@ import com.example.lakbaylaya.ui.screens.map.components.bottomsheet.rememberBott
 import com.example.lakbaylaya.ui.screens.map.models.BottomSheetState
 import com.example.lakbaylaya.ui.screens.map.models.PlaceAction
 import com.example.lakbaylaya.ui.screens.map.models.SearchResult
-import com.example.lakbaylaya.ui.screens.map.utils.DistanceUtils
+import com.example.lakbaylaya.utils.DistanceUtils
 import java.util.Locale
 
 /**
@@ -66,12 +65,16 @@ import java.util.Locale
 @Composable
 fun PlaceBottomSheet(
     sheetState: BottomSheetState,
+    modifier: Modifier = Modifier,
     onStateChange: (BottomSheetState) -> Unit,
     onActionClick: (PlaceAction, SearchResult) -> Unit,
     onDismiss: () -> Unit = {},
-    modifier: Modifier = Modifier,
-    bottomNavigationHeight: Dp = 80.dp
+    bottomNavigationHeight: Dp = 80.dp,
+    // Marker dialog state - passed from parent for higher z-index rendering
+    showMarkerDialog: Boolean = false,
+    onShowMarkerDialog: (Boolean, SearchResult?) -> Unit = { _, _ -> }
 ) {
+
     // Get screen height for calculating proportional heights
     val configuration = LocalConfiguration.current
     val screenHeightDp = configuration.screenHeightDp.dp
@@ -190,7 +193,11 @@ fun PlaceBottomSheet(
                     InitialContent(
                         place = sheetState.place,
                         onActionClick = { action ->
-                            onActionClick(action, sheetState.place)
+                            if (action == PlaceAction.MARK_LOCATION) {
+                                onShowMarkerDialog(true, sheetState.place)
+                            } else {
+                                onActionClick(action, sheetState.place)
+                            }
                         }
                     )
                 }
@@ -198,7 +205,11 @@ fun PlaceBottomSheet(
                     HalfContent(
                         place = sheetState.place,
                         onActionClick = { action ->
-                            onActionClick(action, sheetState.place)
+                            if (action == PlaceAction.MARK_LOCATION) {
+                                onShowMarkerDialog(true, sheetState.place)
+                            } else {
+                                onActionClick(action, sheetState.place)
+                            }
                         },
                         onDismiss = onDismiss
                     )
@@ -207,7 +218,11 @@ fun PlaceBottomSheet(
                     FullContent(
                         place = sheetState.place,
                         onActionClick = { action ->
-                            onActionClick(action, sheetState.place)
+                            if (action == PlaceAction.MARK_LOCATION) {
+                                onShowMarkerDialog(true, sheetState.place)
+                            } else {
+                                onActionClick(action, sheetState.place)
+                            }
                         },
                         onDismiss = onDismiss
                     )
@@ -342,11 +357,8 @@ private fun InitialContent(
             listOf(
                 PlaceAction.START_NAVIGATION,
                 PlaceAction.DIRECTIONS,
-                PlaceAction.EXPLORATION_MODE,
-                PlaceAction.VOICE_NOTES,
                 PlaceAction.MARK_LOCATION,
                 PlaceAction.SAVE_PLACE,
-                PlaceAction.SHARE
             ).forEach { action ->
                 val (icon, label) = getActionIconAndLabel(action)
                 val isDisabled = isTooFarForWalking &&
@@ -531,11 +543,8 @@ private fun HalfContent(
             actions = listOf(
                 PlaceAction.START_NAVIGATION,
                 PlaceAction.DIRECTIONS,
-                PlaceAction.EXPLORATION_MODE,
-                PlaceAction.VOICE_NOTES,
                 PlaceAction.MARK_LOCATION,
                 PlaceAction.SAVE_PLACE,
-                PlaceAction.SHARE
             ),
             onActionClick = onActionClick,
             disabledActions = if (isTooFarForWalking) {
@@ -563,8 +572,7 @@ private fun FullContent(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 16.dp),
-        contentPadding = PaddingValues(bottom = 16.dp),
-        userScrollEnabled = true // Enable scrolling
+        contentPadding = PaddingValues(bottom = 16.dp)
     ) {
         item {
             // Header with place name and close button
@@ -740,11 +748,8 @@ private fun FullContent(
                 actions = listOf(
                     PlaceAction.START_NAVIGATION,
                     PlaceAction.DIRECTIONS,
-                    PlaceAction.EXPLORATION_MODE,
-                    PlaceAction.VOICE_NOTES,
                     PlaceAction.MARK_LOCATION,
                     PlaceAction.SAVE_PLACE,
-                    PlaceAction.SHARE
                 ),
                 onActionClick = onActionClick,
                 disabledActions = if (isTooFarForWalking) {
@@ -1011,13 +1016,10 @@ private fun ActionButton(
 private fun getActionIconAndLabel(action: PlaceAction): Pair<ImageVector, String> {
     return when (action) {
         PlaceAction.START_NAVIGATION -> Icons.Default.Navigation to "Navigate"
-        PlaceAction.VOICE_NOTES -> Icons.AutoMirrored.Filled.VolumeUp to "Voice Notes"
         PlaceAction.SAVE_PLACE -> Icons.Default.Bookmark to "Save"
-        PlaceAction.EXPLORATION_MODE -> Icons.Default.Explore to "Exploration"
         PlaceAction.MARK_LOCATION -> Icons.Default.PushPin to "Mark"
         PlaceAction.SHARE -> Icons.Default.Share to "Share"
         PlaceAction.CALL -> Icons.Default.Call to "Call"
-        PlaceAction.WEBSITE -> Icons.Default.Language to "Website"
         PlaceAction.DIRECTIONS -> Icons.Default.Directions to "Directions"
     }
 }

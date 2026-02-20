@@ -28,13 +28,6 @@ data class DirectionData(
     }
 
     /**
-     * Create new DirectionData with updated stops
-     */
-    fun withStops(newStops: List<RoutePoint>): DirectionData {
-        return copy(stops = newStops)
-    }
-
-    /**
      * Create new DirectionData with selected route changed
      */
     fun withSelectedRoute(index: Int): DirectionData {
@@ -207,7 +200,3 @@ enum class ManeuverType {
     KEEP_LEFT,
     KEEP_RIGHT
 }
-
-
-
-

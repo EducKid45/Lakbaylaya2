@@ -50,7 +50,6 @@ import kotlin.math.roundToInt
  * - Drag state is cleared only when drag ends, not mid-animation.
  */
 @OptIn(ExperimentalFoundationApi::class)
-@Suppress("UNUSED_PARAMETER")
 @Composable
 fun OverlayStopPanel(
     directionData: DirectionData,
@@ -222,7 +221,6 @@ fun OverlayStopPanel(
             fun localKeyIndexToStopIndex(localIndex: Int): Int? {
                 return if (localIndex in 0 until directionData.stops.size) localIndex else null
             }
-            @Suppress("unused")
             fun stopIndexToLocalKeyIndex(stopIndex: Int): Int? {
                 return if (stopIndex in directionData.stops.indices) stopIndex else null
             }

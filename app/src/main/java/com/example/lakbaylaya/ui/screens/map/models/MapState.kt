@@ -19,6 +19,9 @@ package com.example.lakbaylaya.ui.screens.map.models
  * @property polylines List of route polylines to draw on map
  * @property isOverlayPanelExpanded Whether the overlay stop panel is expanded (hides bottom sheet when true)
  * @property navigationState Current navigation state (Inactive or Active with step-by-step guidance)
+ * @property isMarkerEditing Whether marker editor overlay is active for repositioning pin
+ * @property markerEditingResult The search result being edited (for repositioning pin)
+ * @property editingStopIndex Index of stop being edited in direction mode (null if editing regular search result)
  */
 data class MapState(
     val uiMode: UiMode = UiMode.Normal,
@@ -36,7 +39,12 @@ data class MapState(
     val directionData: DirectionData? = null,
     val polylines: List<PolylineData> = emptyList(),
     val isOverlayPanelExpanded: Boolean = false,
-    val navigationState: NavigationState = NavigationState.Inactive
+    val navigationState: NavigationState = NavigationState.Inactive,
+    val pendingVoiceNotesPlace: SearchResult? = null,
+    val isVoiceListening: Boolean = false,
+    val isMarkerEditing: Boolean = false,
+    val markerEditingResult: SearchResult? = null,
+    val editingStopIndex: Int? = null
 )
 
 /**

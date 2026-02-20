@@ -1,16 +1,21 @@
 package com.example.lakbaylaya.ui.navigationbars.nav
 
 import androidx.compose.animation.*
-import androidx.compose.animation.core.tween
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.navigation.NavHostController
 import com.example.lakbaylaya.ui.screens.home.HomeScreen
 import com.example.lakbaylaya.ui.screens.map.MapScreen
 import com.example.lakbaylaya.ui.screens.profile.ProfileScreen
-import com.example.lakbaylaya.ui.screens.route.RouteScreen
+import com.example.lakbaylaya.ui.screens.route.RoutesScreen
+import com.example.lakbaylaya.ui.screens.setting.SettingsScreen
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
+import androidx.lifecycle.viewmodel.compose.viewModel
+import com.example.lakbaylaya.data.repository.RoutesRepositoryRoom
+import com.example.lakbaylaya.ui.screens.route.RoutesViewModelFactory
+import androidx.compose.ui.platform.LocalContext
 
 /**
  * Navigation graph for the app.
@@ -30,53 +35,63 @@ fun NavGraph(
     modifier: Modifier = Modifier,
     onBottomNavVisibilityChange: ((Boolean) -> Unit)? = null
 ) {
-    val animDuration = 220
 
     NavHost(
         navController = navController,
         startDestination = NavRoutes.Home.route,
         modifier = modifier
     ) {
-        composable(
-            NavRoutes.Home.route,
-            enterTransition = { fadeIn(animationSpec = tween(animDuration)) + slideInHorizontally(initialOffsetX = { 50 }, animationSpec = tween(animDuration)) },
-            exitTransition = { fadeOut(animationSpec = tween(animDuration)) + slideOutHorizontally(targetOffsetX = { -50 }, animationSpec = tween(animDuration)) },
-            popEnterTransition = { fadeIn(animationSpec = tween(animDuration)) + slideInHorizontally(initialOffsetX = { -50 }, animationSpec = tween(animDuration)) },
-            popExitTransition = { fadeOut(animationSpec = tween(animDuration)) + slideOutHorizontally(targetOffsetX = { 50 }, animationSpec = tween(animDuration)) }
-        ) {
-            HomeScreen()
+        // Home
+        composable(NavRoutes.Home.route) {
+            HomeScreen(
+                onNavigateToMap = { navController.navigate(NavRoutes.Map.route) },
+                onNavigateToSettings = { navController.navigate(NavRoutes.Settings.route) }
+            )
         }
 
-        composable(
-            NavRoutes.Map.route,
-            enterTransition = { fadeIn(animationSpec = tween(animDuration)) + slideInHorizontally(initialOffsetX = { 50 }, animationSpec = tween(animDuration)) },
-            exitTransition = { fadeOut(animationSpec = tween(animDuration)) + slideOutHorizontally(targetOffsetX = { -50 }, animationSpec = tween(animDuration)) },
-            popEnterTransition = { fadeIn(animationSpec = tween(animDuration)) + slideInHorizontally(initialOffsetX = { -50 }, animationSpec = tween(animDuration)) },
-            popExitTransition = { fadeOut(animationSpec = tween(animDuration)) + slideOutHorizontally(targetOffsetX = { 50 }, animationSpec = tween(animDuration)) }
-        ) {
+        // Map
+        composable(NavRoutes.Map.route) {
             MapScreen(
                 onBottomNavVisibilityChange = onBottomNavVisibilityChange
             )
         }
 
-        composable(
-            NavRoutes.Route.route,
-            enterTransition = { fadeIn(animationSpec = tween(animDuration)) + slideInHorizontally(initialOffsetX = { 50 }, animationSpec = tween(animDuration)) },
-            exitTransition = { fadeOut(animationSpec = tween(animDuration)) + slideOutHorizontally(targetOffsetX = { -50 }, animationSpec = tween(animDuration)) },
-            popEnterTransition = { fadeIn(animationSpec = tween(animDuration)) + slideInHorizontally(initialOffsetX = { -50 }, animationSpec = tween(animDuration)) },
-            popExitTransition = { fadeOut(animationSpec = tween(animDuration)) + slideOutHorizontally(targetOffsetX = { 50 }, animationSpec = tween(animDuration)) }
-        ) {
-            RouteScreen()
+        // Routes (Saved Routes)
+        composable(NavRoutes.Route.route) { backStackEntry ->
+            // Use remember so repository and factory are not recreated on every recomposition
+            val context = LocalContext.current
+            val routesRepo = remember { RoutesRepositoryRoom(context.applicationContext) }
+            val placesRepo =
+                remember { com.example.lakbaylaya.data.repository.SavedPlaceRepositoryImpl(context.applicationContext) }
+            val markersRepo =
+                remember { com.example.lakbaylaya.data.repository.CustomMarkerRepositoryImpl(context.applicationContext) }
+            val factory = remember(routesRepo, placesRepo, markersRepo) {
+                RoutesViewModelFactory(routesRepo, placesRepo, markersRepo)
+            }
+
+            // Scope ViewModel to this nav backStackEntry so it's lifecycle-aware and cleared on pop
+            val viewModel: com.example.lakbaylaya.ui.screens.route.RoutesViewModel =
+                viewModel(viewModelStoreOwner = backStackEntry, factory = factory)
+
+            RoutesScreen(
+                viewModel = viewModel,
+                onPreviewRoute = { /* TODO: Implement preview behaviour - navigate to map and show preview */ },
+                onStartNavigation = { /* TODO: Implement start navigation behaviour - pass route to Map feature */ },
+                onNavigateToSettings = { navController.navigate(NavRoutes.Settings.route) }
+            )
         }
 
-        composable(
-            NavRoutes.Profile.route,
-            enterTransition = { fadeIn(animationSpec = tween(animDuration)) + slideInHorizontally(initialOffsetX = { 50 }, animationSpec = tween(animDuration)) },
-            exitTransition = { fadeOut(animationSpec = tween(animDuration)) + slideOutHorizontally(targetOffsetX = { -50 }, animationSpec = tween(animDuration)) },
-            popEnterTransition = { fadeIn(animationSpec = tween(animDuration)) + slideInHorizontally(initialOffsetX = { -50 }, animationSpec = tween(animDuration)) },
-            popExitTransition = { fadeOut(animationSpec = tween(animDuration)) + slideOutHorizontally(targetOffsetX = { 50 }, animationSpec = tween(animDuration)) }
-        ) {
+        // Profile
+        composable(NavRoutes.Profile.route) {
+            // `ProfileScreen` no longer takes an onNavigateToSettings parameter; call with the default signature.
             ProfileScreen()
+        }
+
+        // Settings
+        composable(NavRoutes.Settings.route) {
+            SettingsScreen(
+                onNavigateBack = { navController.popBackStack() }
+            )
         }
     }
 }

@@ -41,6 +41,7 @@ private val LightColorScheme = lightColorScheme(
     outline = Outline
 )
 
+/*
 private val DarkColorScheme = darkColorScheme(
     primary = DarkPrimary,
     onPrimary = DarkOnPrimary,
@@ -65,7 +66,7 @@ private val DarkColorScheme = darkColorScheme(
     surfaceVariant = DarkSurfaceVariant,
     onSurfaceVariant = DarkOnSurfaceVariant,
     outline = DarkOutline
-)
+)*/
 
 @Composable
 fun LakbaylayaTheme(
@@ -80,7 +81,7 @@ fun LakbaylayaTheme(
             if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
         }
 
-        darkTheme -> DarkColorScheme
+        //darkTheme -> DarkColorScheme
         else -> LightColorScheme
     }
 

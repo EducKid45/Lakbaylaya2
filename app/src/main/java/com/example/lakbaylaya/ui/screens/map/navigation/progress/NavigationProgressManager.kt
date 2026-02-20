@@ -22,9 +22,14 @@ class NavigationProgressManager {
     private var currentStepIndex = 0
     private var userLocation: Location? = null
 
+    // Destination coordinates (separate from route steps)
+    private var destinationLatitude: Double? = null
+    private var destinationLongitude: Double? = null
+
     // Threshold configuration
     private var stepThresholdMeters = 10.0 // Distance threshold to advance step
     private var gpsAccuracyThreshold = 20.0 // Only use GPS if accuracy is better than this
+    private var finalDestinationThresholdMeters = 25.0 // Threshold for final arrival
 
     // Progress tracking
     private var totalDistanceCovered = 0.0
@@ -45,6 +50,8 @@ class NavigationProgressManager {
      */
     fun startNavigation(
         route: RouteOption,
+        destinationLatitude: Double,
+        destinationLongitude: Double,
         onStepAdvanced: (DirectionStep, Int) -> Unit,
         onProgressUpdate: (Double, Double) -> Unit,
         onNavigationComplete: () -> Unit,
@@ -56,28 +63,42 @@ class NavigationProgressManager {
         totalDistanceCovered = 0.0
         stepDistanceCovered = 0.0
 
+        // Store the actual destination coordinates
+        this.destinationLatitude = destinationLatitude
+        this.destinationLongitude = destinationLongitude
+
         this.onStepAdvanced = onStepAdvanced
         this.onProgressUpdate = onProgressUpdate
         this.onNavigationComplete = onNavigationComplete
         this.onDestinationArrived = onDestinationArrived
         this.onDestinationProximity = onDestinationProximity
 
-        // Configure destination arrival detection
+        // Configure destination arrival detection using provided destination coordinates
         if (route.steps.isNotEmpty()) {
-            val finalStep = route.steps.last()
-            arrivalDetector.setDestination(finalStep.latitude, finalStep.longitude)
-            arrivalDetector.setArrivalThreshold(20.0) // 20 meters for destination arrival
-            arrivalDetector.setSpeedThreshold(0.5) // Max 0.5 m/s for arrival confirmation
-            arrivalDetector.setSpeedValidationEnabled(true)
-            arrivalDetector.setRequiredStationaryDuration(3000L) // 3 seconds stationary
+            android.util.Log.d(
+                "NavigationProgressManager",
+                "Setting destination coordinates to: ($destinationLatitude, $destinationLongitude)"
+            )
+
+            arrivalDetector.setDestination(destinationLatitude, destinationLongitude)
+            arrivalDetector.setArrivalThreshold(finalDestinationThresholdMeters) // 25 meters for destination arrival
+            arrivalDetector.setSpeedThreshold(1.0) // Max 1.0 m/s for arrival confirmation (less strict)
+            arrivalDetector.setSpeedValidationEnabled(false) // Disable speed validation for more reliable detection
+            arrivalDetector.setRequiredStationaryDuration(2000L) // 2 seconds stationary (reduced)
 
             // Set up arrival detection callbacks
             arrivalDetector.setOnArrivalDetected { arrivalInfo ->
-                android.util.Log.i("NavigationProgressManager", "🎯 Destination arrival detected!")
+                android.util.Log.i("NavigationProgressManager", "🎯 DESTINATION ARRIVAL DETECTED!")
                 onDestinationArrived?.invoke(arrivalInfo)
+                onNavigationComplete?.invoke()
             }
 
             arrivalDetector.setOnProximityUpdate { proximityInfo ->
+                android.util.Log.d(
+                    "NavigationProgressManager",
+                    "Proximity update: ${proximityInfo.distanceMeters.format(1)}m to destination, " +
+                            "within threshold: ${proximityInfo.isWithinThreshold}"
+                )
                 onDestinationProximity?.invoke(proximityInfo)
             }
         }
@@ -96,42 +117,85 @@ class NavigationProgressManager {
     fun updateLocation(location: Location) {
         val previousLocation = userLocation
         userLocation = location
+        val route = currentRoute ?: return
 
         android.util.Log.d("NavigationProgressManager",
             "GPS Update: lat=${location.latitude}, lng=${location.longitude}, accuracy=${location.accuracy}")
 
-        // Update destination arrival detection
+        // Always update destination arrival detection first
         arrivalDetector.updateLocation(location)
 
-        // Calculate distance moved since last update
-        if (previousLocation != null) {
-            val distanceMoved = calculateDistance(
-                previousLocation.latitude, previousLocation.longitude,
-                location.latitude, location.longitude
-            )
+        // Check if we're at the final step and handle arrival detection
+        val isAtFinalStep = currentStepIndex >= route.steps.size - 1
+        if (isAtFinalStep) {
+            // Use the actual destination coordinates instead of last step coordinates
+            val destLat = destinationLatitude
+            val destLng = destinationLongitude
+            if (destLat != null && destLng != null) {
+                val distanceToFinalDestination = calculateDistance(
+                    location.latitude, location.longitude,
+                    destLat, destLng
+                )
 
-            android.util.Log.d("NavigationProgressManager",
-                "Distance moved: ${distanceMoved}m, accuracy threshold: ${gpsAccuracyThreshold}m")
+                android.util.Log.i(
+                    "NavigationProgressManager",
+                    "🎯 AT FINAL STEP! Current step: $currentStepIndex/${route.steps.size - 1}, " +
+                            "Distance to destination: ${distanceToFinalDestination.format(1)}m (threshold: ${finalDestinationThresholdMeters}m)"
+                )
 
-            // Only count meaningful movements (filter GPS noise)
-            if (distanceMoved > 0.5 && location.accuracy <= gpsAccuracyThreshold) {
-                stepDistanceCovered += distanceMoved
-                totalDistanceCovered += distanceMoved
-
-                android.util.Log.d("NavigationProgressManager",
-                    "Step distance: ${stepDistanceCovered}m, Total: ${totalDistanceCovered}m")
-
-                // Trigger progress update
-                onProgressUpdate?.invoke(stepDistanceCovered, totalDistanceCovered)
-
-                // Check if we should advance to next step
-                checkStepAdvancement(location)
-            } else {
-                android.util.Log.d("NavigationProgressManager",
-                    "Movement filtered out - too small (${distanceMoved}m) or low accuracy (${location.accuracy}m)")
+                // If close enough to final destination, mark as complete immediately
+                if (distanceToFinalDestination <= finalDestinationThresholdMeters) {
+                    android.util.Log.i(
+                        "NavigationProgressManager",
+                        "🎯 FINAL DESTINATION REACHED! Triggering completion..."
+                    )
+                    onNavigationComplete?.invoke()
+                    return // Exit early, don't process regular step advancement
+                }
             }
-        } else {
-            android.util.Log.d("NavigationProgressManager", "First location update - no previous location")
+        }
+
+        // Handle regular step progression (only if not at final step)
+        if (!isAtFinalStep) {
+            // Calculate distance moved since last update for regular step progression
+            if (previousLocation != null) {
+                val distanceMoved = calculateDistance(
+                    previousLocation.latitude, previousLocation.longitude,
+                    location.latitude, location.longitude
+                )
+
+                android.util.Log.d(
+                    "NavigationProgressManager",
+                    "Distance moved: ${distanceMoved}m, accuracy threshold: ${gpsAccuracyThreshold}m"
+                )
+
+                // Only count meaningful movements (filter GPS noise)
+                if (distanceMoved > 0.5 && location.accuracy <= gpsAccuracyThreshold) {
+                    stepDistanceCovered += distanceMoved
+                    totalDistanceCovered += distanceMoved
+
+                    android.util.Log.d(
+                        "NavigationProgressManager",
+                        "Step distance: ${stepDistanceCovered}m, Total: ${totalDistanceCovered}m"
+                    )
+
+                    // Trigger progress update
+                    onProgressUpdate?.invoke(stepDistanceCovered, totalDistanceCovered)
+
+                    // Check if we should advance to next step
+                    checkStepAdvancement(location)
+                } else {
+                    android.util.Log.d(
+                        "NavigationProgressManager",
+                        "Movement filtered out - too small (${distanceMoved}m) or low accuracy (${location.accuracy}m)"
+                    )
+                }
+            } else {
+                android.util.Log.d(
+                    "NavigationProgressManager",
+                    "First location update - no previous location"
+                )
+            }
         }
     }
 
@@ -340,6 +404,11 @@ class NavigationProgressManager {
         gpsAccuracyThreshold = meters
     }
 
+    fun setFinalDestinationThreshold(meters: Double) {
+        finalDestinationThresholdMeters = meters
+        arrivalDetector.setArrivalThreshold(meters)
+    }
+
     /**
      * Calculate distance between two coordinates using Haversine formula
      */
@@ -385,5 +454,49 @@ class NavigationProgressManager {
             remainingDistance = getRemainingStepDistance()
         )
     }
-}
 
+    /**
+     * Manual trigger for arrival testing (for debugging purposes)
+     * This bypasses all distance checks and immediately triggers completion
+     */
+    fun forceArrival() {
+        android.util.Log.i("NavigationProgressManager", "🎯 FORCE ARRIVAL TRIGGERED (DEBUG)")
+        onNavigationComplete?.invoke()
+    }
+
+    /**
+     * Get debug information about current navigation state
+     */
+    fun getDebugInfo(): String {
+        val route = currentRoute
+        val location = userLocation
+        if (route == null || location == null) {
+            return "Navigation not active or no location data"
+        }
+
+        val destLat = destinationLatitude
+        val destLng = destinationLongitude
+        val isAtFinalStep = currentStepIndex >= route.steps.size - 1
+        val distanceToDestination = if (destLat != null && destLng != null) {
+            calculateDistance(location.latitude, location.longitude, destLat, destLng)
+        } else null
+
+        return buildString {
+            appendLine("=== Navigation Debug Info ===")
+            appendLine("Current step: $currentStepIndex/${route.steps.size - 1}")
+            appendLine("Is at final step: $isAtFinalStep")
+            appendLine("Distance to destination: ${distanceToDestination?.format(1)}m")
+            appendLine("Threshold: ${finalDestinationThresholdMeters}m")
+            appendLine("Within threshold: ${(distanceToDestination ?: Double.MAX_VALUE) <= finalDestinationThresholdMeters}")
+            appendLine("Location accuracy: ${location.accuracy}m")
+            if (destLat != null && destLng != null) {
+                appendLine("Destination coords: ($destLat, $destLng)")
+            }
+            appendLine("User coords: (${location.latitude}, ${location.longitude})")
+            appendLine("Arrival detector state: within=${arrivalDetector.isWithinArrivalThreshold()}, arrived=${arrivalDetector.hasDetectedArrival()}")
+        }
+    }
+
+    // Extension function for number formatting
+    private fun Double.format(digits: Int): String = "%.${digits}f".format(this)
+}

@@ -15,7 +15,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.example.lakbaylaya.ui.screens.map.models.PlaceIconType
 import com.example.lakbaylaya.ui.screens.map.models.SearchResult
-import com.example.lakbaylaya.ui.screens.map.utils.DistanceUtils
+import com.example.lakbaylaya.utils.DistanceUtils
 
 /**
  * Search result item component with enhanced design
@@ -23,6 +23,7 @@ import com.example.lakbaylaya.ui.screens.map.utils.DistanceUtils
  * Displays a single search result with:
  * - Category-specific icon on the left
  * - Place name, address, and distance
+ * - Marker edit button for repositioning pin
  * - Navigate action button aligned to the corner
  * - Clean separators and consistent spacing
  * - Material ripple effect
@@ -32,6 +33,7 @@ import com.example.lakbaylaya.ui.screens.map.utils.DistanceUtils
  * @param result The search result to display
  * @param onClick Callback when item is clicked
  * @param onNavigateClick Callback when navigate button is clicked
+ * @param onMarkerEditClick Callback when marker edit button is clicked (for repositioning pin)
  * @param modifier Modifier for customization
  */
 @Composable
@@ -39,6 +41,7 @@ fun SearchResultItem(
     result: SearchResult,
     onClick: () -> Unit,
     onNavigateClick: () -> Unit,
+    onMarkerEditClick: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val formattedDistance = DistanceUtils.formatDistance(result.distanceMeters)
@@ -48,7 +51,8 @@ fun SearchResultItem(
         modifier = modifier
             .fillMaxWidth()
             .semantics {
-                contentDescription = "${result.placeName}, ${result.address}, $accessibilityDescription"
+                contentDescription =
+                    "${result.placeName}, ${result.address}, $accessibilityDescription"
             },
         color = MaterialTheme.colorScheme.surface
     ) {
@@ -98,6 +102,24 @@ fun SearchResultItem(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+
+            // Marker edit button (if callback provided)
+            if (onMarkerEditClick != null) {
+                IconButton(
+                    onClick = onMarkerEditClick,
+                    modifier = Modifier
+                        .size(48.dp)
+                        .semantics {
+                            contentDescription = "Adjust pin position for ${result.placeName}"
+                        }
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.EditLocationAlt,
+                        contentDescription = "Edit marker position",
+                        tint = MaterialTheme.colorScheme.secondary
                     )
                 }
             }

@@ -1,9 +1,15 @@
 package com.example.lakbaylaya.ui.navigationbars.viewmodel
 
-import androidx.lifecycle.ViewModel
+import android.app.Application
+import androidx.activity.result.ActivityResultLauncher
+import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import com.example.lakbaylaya.bluetooth.BluetoothViewModel
+import com.example.lakbaylaya.bluetooth.BluetoothState
+import kotlinx.coroutines.launch
 
 /**
  * Main ViewModel for the app
@@ -18,9 +24,10 @@ import kotlinx.coroutines.flow.asStateFlow
  * - Single source of truth for UI state
  * - Exposes state via StateFlow for reactive UI
  * - Business logic isolated from UI
+ * - Delegates Bluetooth operations to BluetoothViewModel
  *
  * SOLID Principles:
- * - Single Responsibility: Manages only app-level state
+ * - Single Responsibility: Manages app-level state, delegates Bluetooth to BluetoothViewModel
  * - Open/Closed: Can extend with new state without modifying existing
  * - Dependency Inversion: UI depends on ViewModel interface, not implementation
  *
@@ -28,11 +35,20 @@ import kotlinx.coroutines.flow.asStateFlow
  * - Unit testable (no Android dependencies)
  * - State changes can be verified
  */
-class AppViewModel : ViewModel() {
+class AppViewModel(
+    application: Application
+) : AndroidViewModel(application) {
 
-    // Bluetooth state
+    // Bluetooth ViewModel for managing Bluetooth state (uses application context)
+    private val bluetoothViewModel = BluetoothViewModel(application)
+
+    // Bluetooth state - expose from BluetoothViewModel
     private val _isBluetoothEnabled = MutableStateFlow(false)
     val isBluetoothEnabled: StateFlow<Boolean> = _isBluetoothEnabled.asStateFlow()
+
+    // Also expose full BluetoothState for richer UI (scanning/connecting/etc.)
+    private val _bluetoothState = MutableStateFlow(BluetoothState.DISCONNECTED)
+    val bluetoothState: StateFlow<BluetoothState> = _bluetoothState.asStateFlow()
 
     // Notification count
     private val _notificationCount = MutableStateFlow(0)
@@ -42,13 +58,49 @@ class AppViewModel : ViewModel() {
     private val _isEmergencyTriggered = MutableStateFlow(false)
     val isEmergencyTriggered: StateFlow<Boolean> = _isEmergencyTriggered.asStateFlow()
 
+    init {
+        // Collect Bluetooth connected state from BluetoothViewModel
+        bluetoothViewModel.let { vm ->
+            viewModelScope.launch {
+                vm.isBluetoothConnected.collect { isConnected ->
+                    _isBluetoothEnabled.value = isConnected
+                }
+            }
+            // Collect full bluetoothState as well
+            viewModelScope.launch {
+                vm.bluetoothState.collect { state ->
+                    _bluetoothState.value = state
+                }
+            }
+        }
+    }
+
+    /**
+     * Set permission launcher for Bluetooth operations
+     * Call from MainActivity
+     */
+    fun setBluetoothPermissionLauncher(launcher: ActivityResultLauncher<Array<String>>) {
+        bluetoothViewModel.setPermissionLauncher(launcher)
+    }
+
     /**
      * Toggle Bluetooth state
-     * In production, this would interact with Android Bluetooth APIs
      */
     fun toggleBluetooth() {
-        _isBluetoothEnabled.value = !_isBluetoothEnabled.value
-        // TODO: Integrate with BluetoothAdapter in data layer
+        // Optimistically update UI immediately so icon toggles.
+        val currentlyEnabled = _isBluetoothEnabled.value
+
+        bluetoothViewModel.let { vm ->
+            if (currentlyEnabled) {
+                // If currently enabled, disable hardware Bluetooth
+                _isBluetoothEnabled.value = false
+                vm.disableHardwareBluetooth()
+            } else {
+                // If currently disabled, enable hardware Bluetooth
+                _isBluetoothEnabled.value = true
+                vm.enableHardwareBluetooth()
+            }
+        }
     }
 
     /**
@@ -103,5 +155,12 @@ class AppViewModel : ViewModel() {
      */
     fun simulateNotifications(count: Int) {
         _notificationCount.value = count
+    }
+
+    /**
+     * Set the current Activity on the BluetoothViewModel so it can launch system dialogs
+     */
+    fun setActivity(activity: android.app.Activity?) {
+        bluetoothViewModel.setActivity(activity)
     }
 }

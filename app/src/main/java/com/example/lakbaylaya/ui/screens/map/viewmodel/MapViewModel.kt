@@ -4,18 +4,17 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
-import com.example.lakbaylaya.ui.screens.map.data.repository.MapRepository
-import com.example.lakbaylaya.ui.screens.map.data.repository.MapRepositoryImpl
+import com.example.lakbaylaya.data.repository.MapRepository
+import com.example.lakbaylaya.data.repository.MapRepositoryImpl
 import com.example.lakbaylaya.ui.screens.map.models.*
-import com.example.lakbaylaya.ui.screens.map.utils.CategoryIconMapper
-import com.example.lakbaylaya.ui.screens.map.utils.Debouncer
-import com.example.lakbaylaya.ui.screens.map.utils.DistanceUtils
-import com.example.lakbaylaya.ui.screens.map.utils.LocationProvider
+import com.example.lakbaylaya.utils.LocationProvider
+import com.example.lakbaylaya.ui.screens.map.location.MapLocationController
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
 
 /**
  * Factory for creating MapViewModel with Application context
@@ -59,12 +58,12 @@ class MapViewModel(
 ) : AndroidViewModel(application) {
 
     companion object {
-        private const val MIN_SEARCH_QUERY_LENGTH = 3
         private const val DEBOUNCE_DELAY_MS = 300L
-        private const val MAX_RECENT_SEARCHES = 10
-        private const val MAX_SEARCH_RESULTS = 10
         private const val MIN_DISTANCE_FOR_UPDATE_METERS = 50.0 // Don't update if moved less than 50m
     }
+
+    // TTS manager used to speak the final recognized search phrase ("Searching for ...")
+    private val voiceManager by lazy { com.example.lakbaylaya.voice.VoiceManager(getApplication()) }
 
     // Mutable state
     private val _state = MutableStateFlow(MapState())
@@ -72,20 +71,40 @@ class MapViewModel(
     // Public immutable state
     val state: StateFlow<MapState> = _state.asStateFlow()
 
+    // MapLibre manager reference (set by MapScreen after initialization)
+    var mapManager: com.example.lakbaylaya.maplibre.manager.MapLibreManager? = null
+
     // Debouncer for search input (300ms delay)
-    private val searchDebouncer = Debouncer(
-        delayMillis = DEBOUNCE_DELAY_MS,
-        coroutineScope = viewModelScope
+    // Search manager handles debounced searching and result transforms
+    private val searchManager = MapSearchManager(
+        repository = repository,
+        state = _state,
+        coroutineScope = viewModelScope,
+        debounceDelayMs = DEBOUNCE_DELAY_MS
     )
 
-    // Location provider for GPS updates
+    // Stop/route manager handles adding/removing/swapping stops and recalculating routes
+    private val stopManager = MapStopManager(
+        repository = repository,
+        state = _state,
+        coroutineScope = viewModelScope,
+        addToRecentCallback = { result -> searchManager.addToRecentSearches(result) }
+    )
+
+    // Navigation manager handles active navigation lifecycle and GPS-driven updates
+    private val navigationManager = MapNavigationManager(
+        _state
+    )
+
+    // Location provider and controller for GPS updates + reverse geocoding
     private val locationProvider by lazy { LocationProvider(getApplication()) }
-
-    // Track last reverse geocoded location to prevent unnecessary API calls
-    private var lastReverseGeocodedLatLng: Pair<Double, Double>? = null
-
-    // Navigation management
-    private var navigationProgressManager: com.example.lakbaylaya.ui.screens.map.navigation.progress.NavigationProgressManager? = null
+    private val locationController = MapLocationController(
+        repository = repository,
+        state = _state,
+        coroutineScope = viewModelScope,
+        locationProvider = locationProvider,
+        distanceThresholdMeters = MIN_DISTANCE_FOR_UPDATE_METERS
+    )
 
     init {
         // Initialize with default location (Manila City Hall) until GPS updates
@@ -108,29 +127,57 @@ class MapViewModel(
      * - 3+ characters -> Typing -> (debounced) -> Searching -> Results/Empty/Error
      */
     fun onSearchQueryChange(query: String) {
-        _state.update { it.copy(searchQuery = query) }
+        searchManager.onSearchQueryChange(query)
+    }
 
-        // Cancel any pending search
-        searchDebouncer.cancel()
+    /** Voice recognition integration - update listening flag and accept voice transcripts */
+    fun startVoiceListening() {
+        _state.update { it.copy(isVoiceListening = true, isSearchOverlayActive = true) }
+        // TTS prompt moved to SpeechRecognitionManager.onReadyForSpeech() when using SpeechRecognizer,
+        // but MapScreen uses the system activity recognizer, so provide an explicit cue method below.
+    }
 
-        when {
-            query.isEmpty() -> {
-                // Return to idle state
-                _state.update { it.copy(searchUiState = SearchUiState.Idle) }
-            }
+    fun playListeningCue() {
+        try {
+            voiceManager.speak("I'm listening")
+        } catch (e: Exception) {
+            android.util.Log.w("MapViewModel", "TTS listening cue failed: ${e.message}")
+        }
+    }
 
-            query.length < MIN_SEARCH_QUERY_LENGTH -> {
-                // Typing but not enough characters to search
-                _state.update { it.copy(searchUiState = SearchUiState.Typing(query)) }
-            }
+    fun stopVoiceListening() {
+        _state.update { it.copy(isVoiceListening = false) }
+        // SpeechRecognitionManager will stop TTS when recognition ends or is cancelled if used.
+    }
 
-            else -> {
-                // Enough characters - show typing state and debounce search
-                _state.update { it.copy(searchUiState = SearchUiState.Typing(query)) }
+    /** Called when voice recognizer returns text. If final, we set the search query and trigger search flow. */
+    fun onVoiceResult(text: String, isFinal: Boolean) {
+        if (isFinal) {
+            // Update UI immediately
+            _state.update { it.copy(searchQuery = text, isVoiceListening = false) }
 
-                searchDebouncer.debounce {
-                    performSearch(query)
+            // Speak the phrase we will search for, then trigger the actual search after a short delay
+            viewModelScope.launch {
+                try {
+                    // Use TTS to confirm/search phrase vocally
+                    voiceManager.speak("Searching for $text")
+                } catch (e: Exception) {
+                    android.util.Log.w("MapViewModel", "TTS speak failed: ${e.message}")
                 }
+
+                // Small delay to let the spoken phrase start before triggering network search
+                delay(450)
+
+                // Trigger search manager after speaking
+                searchManager.onSearchQueryChange(text)
+            }
+        } else {
+            // Update query shown in UI but don't trigger debounced search for partials
+            _state.update {
+                it.copy(
+                    searchQuery = text,
+                    searchUiState = SearchUiState.Typing(text)
+                )
             }
         }
     }
@@ -146,7 +193,7 @@ class MapViewModel(
      * Deactivates search overlay (back button pressed)
      */
     fun onBackClick() {
-        searchDebouncer.cancel()
+        searchManager.cancelPending()
         _state.update {
             it.copy(
                 isSearchOverlayActive = false,
@@ -160,7 +207,7 @@ class MapViewModel(
      * Also removes marker if present
      */
     fun onClearSearch() {
-        searchDebouncer.cancel()
+        searchManager.cancelPending()
         _state.update {
             it.copy(
                 searchQuery = "",
@@ -179,7 +226,7 @@ class MapViewModel(
      */
     fun onResultSelected(result: SearchResult) {
         // Add to recent searches (max 10 items)
-        val updatedRecent = addToRecentSearches(result)
+        val updatedRecent = searchManager.addToRecentSearches(result)
 
         _state.update {
             it.copy(
@@ -190,6 +237,230 @@ class MapViewModel(
                 searchQuery = result.address, // Auto-fill search bar with address
                 searchUiState = SearchUiState.Idle,
                 bottomSheetState = BottomSheetState.Initial(result)
+            )
+        }
+    }
+
+    /**
+     * Opens marker editor overlay to reposition pin for a search result
+     * Closes search overlay and shows marker editor with centered pin
+     * Clears the selected marker so search icon disappears during editing
+     */
+    fun onSearchResultMarkerEdit(result: SearchResult) {
+        android.util.Log.d(
+            "MapViewModel",
+            "onSearchResultMarkerEdit: opening editor for ${result.placeName} at ${result.latitude},${result.longitude}"
+        )
+        _state.update {
+            it.copy(
+                isSearchOverlayActive = false, // Close search overlay
+                isMarkerEditing = true, // Open marker editor
+                markerEditingResult = result, // Store result being edited
+                searchUiState = SearchUiState.Idle,
+                selectedMarker = result, // Show marker icon during editing so the pin is visible
+                bottomSheetState = BottomSheetState.Hidden // Hide bottom sheet during editing
+            )
+        }
+
+        // Move map camera to the search result location
+        viewModelScope.launch {
+            mapManager?.animateTo(
+                latitude = result.latitude,
+                longitude = result.longitude,
+                zoom = 17.0
+            )
+            android.util.Log.d(
+                "MapViewModel",
+                "onSearchResultMarkerEdit: animated to ${result.latitude},${result.longitude}"
+            )
+        }
+    }
+
+    /**
+     * Opens marker editor for a stop in direction mode
+     * Allows repositioning stop locations from search results
+     */
+    fun onEditStopLocation(stopIndex: Int) {
+        val directionData = _state.value.directionData ?: return
+        if (stopIndex !in directionData.stops.indices) return
+
+        val stop = directionData.stops[stopIndex]
+
+        // Create a SearchResult from the stop for editing
+        val stopAsResult = SearchResult(
+            id = "stop_$stopIndex",
+            placeName = stop.name,
+            address = stop.address,
+            latitude = stop.latitude,
+            longitude = stop.longitude,
+            category = "",
+            iconType = com.example.lakbaylaya.ui.screens.map.models.PlaceIconType.LOCATION,
+            distanceMeters = 0.0
+        )
+
+        _state.update {
+            it.copy(
+                isSearchOverlayActive = false,
+                isMarkerEditing = true,
+                markerEditingResult = stopAsResult,
+                selectedMarker = null,
+                bottomSheetState = BottomSheetState.Hidden,
+                // Store metadata about which stop is being edited
+                editingStopIndex = stopIndex
+            )
+        }
+
+        // Move camera to stop location
+        viewModelScope.launch {
+            mapManager?.animateTo(
+                latitude = stop.latitude,
+                longitude = stop.longitude,
+                zoom = 17.0
+            )
+        }
+    }
+
+    /**
+     * Handles when user confirms new marker position after editing
+     * Updates the result with new coordinates and refreshes Place Bottom Sheet
+     * Also handles updating stops in Direction mode
+     */
+    fun onMarkerEditConfirmed(latitude: Double, longitude: Double, address: String) {
+        android.util.Log.d(
+            "MapViewModel",
+            "onMarkerEditConfirmed: confirmed at $latitude,$longitude ($address)"
+        )
+        val editingResult = _state.value.markerEditingResult ?: return
+        val editingStopIndex = _state.value.editingStopIndex
+
+        // Check if we're editing a stop in direction mode
+        if (editingStopIndex != null) {
+            onStopEditConfirmed(editingStopIndex, latitude, longitude, address)
+            return
+        }
+
+        // Create updated search result with new coordinates
+        val updatedResult = editingResult.copy(
+            latitude = latitude,
+            longitude = longitude,
+            address = address
+        )
+
+        // Add updated result to recent searches
+        val updatedRecent = searchManager.addToRecentSearches(updatedResult)
+
+        // Close marker editor. Show the place bottom sheet with the updated location so the user
+        // can see place details and confirm/cancel actions after re-marking.
+        _state.update {
+            it.copy(
+                isMarkerEditing = false,
+                markerEditingResult = null,
+                selectedResult = updatedResult,
+                selectedMarker = updatedResult, // Show marker at new position
+                // Show the place sheet reflecting the new coordinates and details
+                bottomSheetState = BottomSheetState.Initial(updatedResult),
+                // Ensure search overlay and typing state are cleared
+                isSearchOverlayActive = false,
+                searchQuery = "",
+                searchUiState = SearchUiState.Idle,
+                recentSearches = updatedRecent // Update recent searches
+            )
+        }
+        android.util.Log.d(
+            "MapViewModel",
+            "onMarkerEditConfirmed: state updated; bottomSheetState=Initial with ${updatedResult.latitude},${updatedResult.longitude}"
+        )
+    }
+
+    /**
+     * Handles confirming edited stop location
+     * Updates the stop coordinates and recalculates the route
+     */
+    private fun onStopEditConfirmed(
+        stopIndex: Int,
+        latitude: Double,
+        longitude: Double,
+        address: String
+    ) {
+        val currentData = _state.value.directionData ?: return
+        if (stopIndex !in currentData.stops.indices) return
+
+        val oldStop = currentData.stops[stopIndex]
+        val updatedStop = oldStop.copy(
+            latitude = latitude,
+            longitude = longitude,
+            address = address
+        )
+
+        val newStops = currentData.stops.toMutableList()
+        newStops[stopIndex] = updatedStop
+
+        val updatedData = currentData.copy(stops = newStops)
+
+        // Close editor and show loading state
+        _state.update {
+            it.copy(
+                isMarkerEditing = false,
+                markerEditingResult = null,
+                editingStopIndex = null,
+                directionData = updatedData.copy(routes = emptyList()),
+                polylines = emptyList(),
+                bottomSheetState = BottomSheetState.DirectionInitial(updatedData)
+            )
+        }
+
+        // Recalculate route with updated stop
+        viewModelScope.launch {
+            val result = repository.calculateRouteWithStops(
+                updatedData.origin,
+                updatedData.destination,
+                updatedData.stops,
+                mode = "walk"
+            )
+            result.onSuccess { routes ->
+                val finalData = updatedData.copy(routes = routes, selectedRouteIndex = 0)
+                val newPolylines = routes.map { route ->
+                    PolylineData(
+                        routeId = route.id,
+                        coordinates = route.polylineCoordinates,
+                        isPrimary = route.isPrimary
+                    )
+                }
+                _state.update {
+                    it.copy(
+                        directionData = finalData,
+                        polylines = newPolylines,
+                        bottomSheetState = BottomSheetState.DirectionInitial(finalData)
+                    )
+                }
+            }.onFailure { error ->
+                android.util.Log.e(
+                    "MapViewModel",
+                    "Failed to recalculate route after editing stop: ${error.message}",
+                    error
+                )
+                _state.update {
+                    it.copy(
+                        bottomSheetState = BottomSheetState.DirectionInitial(updatedData),
+                        searchUiState = SearchUiState.Error(
+                            query = "",
+                            message = "Failed to recalculate route."
+                        )
+                    )
+                }
+            }
+        }
+    }
+
+    /**
+     * Handles when user cancels marker editing
+     */
+    fun onMarkerEditCancelled() {
+        _state.update {
+            it.copy(
+                isMarkerEditing = false,
+                markerEditingResult = null,
+                editingStopIndex = null // Clear editing stop index on cancel
             )
         }
     }
@@ -228,15 +499,12 @@ class MapViewModel(
      */
     fun onPlaceAction(action: PlaceAction, place: SearchResult) {
         when (action) {
-            PlaceAction.START_NAVIGATION -> navigateToLocation(place)
+            PlaceAction.START_NAVIGATION -> showDirections(place, autoStart = true)
             PlaceAction.SAVE_PLACE -> savePlaceToFavorites(place)
-            PlaceAction.VOICE_NOTES -> openVoiceNotesForPlace(place)
-            PlaceAction.EXPLORATION_MODE -> startExplorationMode(place)
             PlaceAction.MARK_LOCATION -> markLocation(place)
             PlaceAction.SHARE -> sharePlace(place)
             PlaceAction.CALL -> callPlace(place)
-            PlaceAction.WEBSITE -> openWebsite(place)
-            PlaceAction.DIRECTIONS -> showDirections(place)
+            PlaceAction.DIRECTIONS -> showDirections(place, autoStart = false)
         }
     }
 
@@ -268,114 +536,7 @@ class MapViewModel(
         // Camera movement will be handled by MapScreen when selectedResult changes
     }
 
-    /**
-     * Performs search using repository and updates UI state
-     *
-     * State transitions:
-     * Searching -> Results (if results found)
-     * Searching -> Empty (if no results)
-     * Searching -> Error (if API fails)
-     */
-    private fun performSearch(query: String) {
-        if (query.isBlank() || query.length < MIN_SEARCH_QUERY_LENGTH) {
-            return
-        }
-
-        // Transition to searching state
-        _state.update { it.copy(searchUiState = SearchUiState.Searching(query)) }
-
-        viewModelScope.launch {
-            val currentLocation = _state.value.currentLocation
-            val apiResult = repository.searchPlaces(
-                query = query,
-                latitude = currentLocation?.latitude,
-                longitude = currentLocation?.longitude,
-                limit = MAX_SEARCH_RESULTS
-            )
-
-            apiResult.onSuccess { rawResults ->
-                // Transform results: calculate distance, sort, map icons
-                val transformedResults = transformSearchResults(rawResults, currentLocation)
-
-                // Update state based on results
-                val newState = if (transformedResults.isEmpty()) {
-                    SearchUiState.Empty(query)
-                } else {
-                    SearchUiState.Results(query, transformedResults)
-                }
-
-                _state.update { it.copy(searchUiState = newState) }
-            }.onFailure { error ->
-                // Transition to error state
-                _state.update {
-                    it.copy(
-                        searchUiState = SearchUiState.Error(
-                            query = query,
-                            message = error.message ?: "Failed to search places"
-                        )
-                    )
-                }
-            }
-        }
-    }
-
-    /**
-     * Transforms raw search results:
-     * - Calculates accurate distance from user location
-     * - Sorts by distance (nearest first)
-     * - Maps categories to icon types
-     * - Limits to MAX_SEARCH_RESULTS
-     */
-    private fun transformSearchResults(
-        results: List<SearchResult>,
-        userLocation: Location?
-    ): List<SearchResult> {
-        if (userLocation == null) return results.take(MAX_SEARCH_RESULTS)
-
-        return results
-            .map { result ->
-                // Recalculate distance using accurate Haversine formula
-                val accurateDistance = DistanceUtils.calculateDistance(
-                    lat1 = userLocation.latitude,
-                    lon1 = userLocation.longitude,
-                    lat2 = result.latitude,
-                    lon2 = result.longitude
-                )
-
-                // Map category to icon type
-                val iconType = CategoryIconMapper.getCategoryIcon(
-                    category = result.category,
-                    isRecent = result.isRecent
-                )
-
-                result.copy(
-                    distanceMeters = accurateDistance,
-                    iconType = iconType
-                )
-            }
-            .sortedBy { it.distanceMeters } // Sort by nearest distance
-            .take(MAX_SEARCH_RESULTS)
-    }
-
-    /**
-     * Adds a result to recent searches list
-     * Maintains max of MAX_RECENT_SEARCHES items
-     * Avoids duplicates
-     */
-    private fun addToRecentSearches(result: SearchResult): List<SearchResult> {
-        val currentRecent = _state.value.recentSearches
-
-        // Remove if already exists (to move to top)
-        val filtered = currentRecent.filterNot { it.id == result.id }
-
-        // Add to top with recent flag and icon
-        val recentResult = result.copy(
-            isRecent = true,
-            iconType = PlaceIconType.RECENT
-        )
-
-        return listOf(recentResult) + filtered.take(MAX_RECENT_SEARCHES - 1)
-    }
+    // performSearch is delegated to MapSearchManager
 
     // Private action handlers
 
@@ -384,7 +545,14 @@ class MapViewModel(
     }
 
     private fun openVoiceNotesForPlace(@Suppress("UNUSED_PARAMETER") place: SearchResult) {
-        // TODO: Implement voice notes feature
+        // Navigate to Voice Notes screen with place location
+        // This will be handled by the UI layer (MapScreen) by exposing a callback
+        _state.update {
+            it.copy(
+                // Add a flag or state to trigger navigation to Voice Notes screen
+                pendingVoiceNotesPlace = place
+            )
+        }
     }
 
     private fun startExplorationMode(@Suppress("UNUSED_PARAMETER") place: SearchResult) {
@@ -393,6 +561,10 @@ class MapViewModel(
 
     private fun markLocation(@Suppress("UNUSED_PARAMETER") place: SearchResult) {
         // TODO: Implement location marking
+    }
+
+    private fun addDifficulty(@Suppress("UNUSED_PARAMETER") place: SearchResult) {
+        // TODO: Implement adding difficulty metadata for a place (e.g., accessibility difficulty)
     }
 
     private fun sharePlace(@Suppress("UNUSED_PARAMETER") place: SearchResult) {
@@ -407,7 +579,10 @@ class MapViewModel(
         // TODO: Implement opening browser
     }
 
-    private fun showDirections(place: SearchResult) {
+    /**
+     * Modified showDirections to accept autoStart parameter
+     */
+    private fun showDirections(place: SearchResult, autoStart: Boolean = false) {
         // Create direction data from current location to selected place
         val currentLoc = _state.value.currentLocation ?: return
 
@@ -467,6 +642,11 @@ class MapViewModel(
                         polylines = polylines,
                         bottomSheetState = BottomSheetState.DirectionInitial(directionData)
                     )
+                }
+
+                // If requested, start navigation immediately (uses same action as DirectionBottomSheet Start)
+                if (autoStart) {
+                    startNavigation()
                 }
             }.onFailure { error ->
                 // Handle error - keep sheet visible in loading/error state without mock
@@ -577,398 +757,49 @@ class MapViewModel(
      * Add a stop from search result
      */
     fun onAddStopFromSearch(result: SearchResult) {
-        val currentData = _state.value.directionData ?: return
-
-        // Check if this coordinate already exists in origin, destination, or stops
-        val epsilon = 0.0001 // ~11 meters tolerance
-        val isDuplicate = listOf(currentData.origin, currentData.destination)
-            .plus(currentData.stops)
-            .any { point ->
-                kotlin.math.abs(point.latitude - result.latitude) < epsilon &&
-                kotlin.math.abs(point.longitude - result.longitude) < epsilon
-            }
-
-        if (isDuplicate) {
-            // Show error - location already added
-            _state.update {
-                it.copy(
-                    searchUiState = SearchUiState.Error(
-                        query = result.placeName,
-                        message = "This location is already in your route"
-                    )
-                )
-            }
-            return
-        }
-
-        // Validate distance from current location (last stop or origin)
-        val lastPoint = currentData.stops.lastOrNull() ?: currentData.origin
-        val distanceFromLast = DistanceUtils.calculateDistance(
-            lastPoint.latitude,
-            lastPoint.longitude,
-            result.latitude,
-            result.longitude
-        )
-
-        // Also validate distance to destination
-        val distanceToDestination = DistanceUtils.calculateDistance(
-            result.latitude,
-            result.longitude,
-            currentData.destination.latitude,
-            currentData.destination.longitude
-        )
-
-        // Check if any segment would exceed 50km limit
-        if (distanceFromLast > 50000) {
-            _state.update {
-                it.copy(
-                    searchUiState = SearchUiState.Error(
-                        query = result.placeName,
-                        message = "Stop too far from previous location (${DistanceUtils.formatDistance(distanceFromLast)}). Maximum walking distance is 50 km per segment."
-                    )
-                )
-            }
-            return
-        }
-
-        if (distanceToDestination > 50000) {
-            _state.update {
-                it.copy(
-                    searchUiState = SearchUiState.Error(
-                        query = result.placeName,
-                        message = "Stop too far from destination (${DistanceUtils.formatDistance(distanceToDestination)}). Maximum walking distance is 50 km per segment."
-                    )
-                )
-            }
-            return
-        }
-
-        val newStop = RoutePoint(
-            latitude = result.latitude,
-            longitude = result.longitude,
-            name = result.placeName,
-            address = result.address
-        )
-
-        val updatedData = currentData.addStop(newStop)
-
-        // Add the selected result to recent searches so it appears in history
-        val updatedRecent = addToRecentSearches(result)
-
-        // Close search and show loading state
-        _state.update {
-            it.copy(
-                directionData = updatedData.copy(routes = emptyList()), // Clear routes while loading
-                polylines = emptyList(),
-                isSearchOverlayActive = false,
-                searchQuery = "",
-                recentSearches = updatedRecent,
-                bottomSheetState = BottomSheetState.DirectionInitial(updatedData)
-            )
-        }
-
-        // Fetch new routes with the added stop
-        viewModelScope.launch {
-            val result = repository.calculateRouteWithStops(
-                updatedData.origin,
-                updatedData.destination,
-                updatedData.stops,
-                mode = "walk"
-            )
-
-            result.onSuccess { newRoutes ->
-                val finalData = updatedData.copy(routes = newRoutes, selectedRouteIndex = 0)
-
-                val newPolylines = newRoutes.map { route ->
-                    PolylineData(
-                        routeId = route.id,
-                        coordinates = route.polylineCoordinates,
-                        isPrimary = route.isPrimary
-                    )
-                }
-
-                _state.update {
-                    it.copy(
-                        directionData = finalData,
-                        polylines = newPolylines,
-                        bottomSheetState = BottomSheetState.DirectionInitial(finalData)
-                    )
-                }
-            }.onFailure { error ->
-                android.util.Log.e("MapViewModel", "Failed to calculate route with stops: ${error.message}", error)
-                // Keep sheet visible in loading/error state without mock
-                _state.update {
-                    it.copy(
-                        searchUiState = SearchUiState.Error(
-                            query = "",
-                            message = "Getting route failed. Please try again."
-                        ),
-                        bottomSheetState = BottomSheetState.DirectionInitial(updatedData)
-                    )
-                }
-            }
-        }
+        stopManager.onAddStopFromSearch(result)
     }
 
     /**
      * Remove a stop at index
      */
     fun onRemoveStop(index: Int) {
-        val currentData = _state.value.directionData ?: return
-        val updatedData = currentData.removeStop(index)
-
-        // Show loading state immediately and keep sheet visible
-        _state.update {
-            it.copy(
-                directionData = updatedData.copy(routes = emptyList()),
-                polylines = emptyList(),
-                bottomSheetState = BottomSheetState.DirectionInitial(updatedData)
-            )
-        }
-
-        // Regenerate routes without the stop
-        viewModelScope.launch {
-            val result = if (updatedData.stops.isEmpty()) {
-                repository.calculateRoute(updatedData.origin, updatedData.destination, mode = "walk")
-            } else {
-                repository.calculateRouteWithStops(updatedData.origin, updatedData.destination, updatedData.stops, mode = "walk")
-            }
-
-            result.onSuccess { newRoutes ->
-                val finalData = updatedData.copy(routes = newRoutes, selectedRouteIndex = 0)
-
-                val newPolylines = newRoutes.map { route ->
-                    PolylineData(
-                        routeId = route.id,
-                        coordinates = route.polylineCoordinates,
-                        isPrimary = route.isPrimary
-                    )
-                }
-
-                _state.update {
-                    it.copy(
-                        directionData = finalData,
-                        polylines = newPolylines
-                    )
-                }
-            }.onFailure { error ->
-                android.util.Log.e("MapViewModel", "Failed to calculate route after removing stop: ${error.message}", error)
-                // Keep sheet visible, no mock
-                _state.update {
-                    it.copy(
-                        bottomSheetState = BottomSheetState.DirectionInitial(updatedData)
-                    )
-                }
-            }
-        }
+        stopManager.onRemoveStop(index)
     }
 
     /**
      * Swap origin and destination
      */
     fun onSwapOriginDestination() {
-        val currentData = _state.value.directionData ?: return
-        val swapped = currentData.swapOriginDestination()
-
-        // Show loading state and keep sheet visible
-        _state.update {
-            it.copy(
-                directionData = swapped.copy(routes = emptyList()),
-                polylines = emptyList(),
-                bottomSheetState = when (it.bottomSheetState) {
-                    is BottomSheetState.DirectionInitial -> BottomSheetState.DirectionInitial(swapped)
-                    is BottomSheetState.DirectionFullExpand -> BottomSheetState.DirectionFullExpand(swapped)
-                    else -> BottomSheetState.DirectionInitial(swapped)
-                }
-            )
-        }
-
-        // Regenerate routes with swapped origin/destination
-        viewModelScope.launch {
-            val result = if (swapped.stops.isEmpty()) {
-                repository.calculateRoute(swapped.origin, swapped.destination, mode = "walk")
-            } else {
-                repository.calculateRouteWithStops(swapped.origin, swapped.destination, swapped.stops, mode = "walk")
-            }
-
-            result.onSuccess { newRoutes ->
-                val updatedData = swapped.copy(routes = newRoutes, selectedRouteIndex = 0)
-
-                val newPolylines = newRoutes.map { route ->
-                    PolylineData(
-                        routeId = route.id,
-                        coordinates = route.polylineCoordinates,
-                        isPrimary = route.isPrimary
-                    )
-                }
-
-                _state.update {
-                    it.copy(
-                        directionData = updatedData,
-                        polylines = newPolylines,
-                        bottomSheetState = when (val currentSheet = it.bottomSheetState) {
-                            is BottomSheetState.DirectionInitial -> BottomSheetState.DirectionInitial(updatedData)
-                            is BottomSheetState.DirectionFullExpand -> BottomSheetState.DirectionFullExpand(updatedData)
-                            else -> currentSheet
-                        }
-                    )
-                }
-            }.onFailure { error ->
-                android.util.Log.e("MapViewModel", "Failed to calculate route after swap: ${error.message}", error)
-                // Keep sheet visible without mock
-                _state.update {
-                    it.copy(
-                        bottomSheetState = when (it.bottomSheetState) {
-                            is BottomSheetState.DirectionInitial -> BottomSheetState.DirectionInitial(swapped)
-                            is BottomSheetState.DirectionFullExpand -> BottomSheetState.DirectionFullExpand(swapped)
-                            else -> BottomSheetState.DirectionInitial(swapped)
-                        }
-                    )
-                }
-            }
-        }
+        stopManager.onSwapOriginDestination()
     }
 
     /**
      * Swap a stop with the destination (making that stop the new destination)
      */
     fun onSwapStopWithDestination(stopIndex: Int) {
-        val currentData = _state.value.directionData ?: return
-        if (stopIndex !in currentData.stops.indices) return
-
-        val newStops = currentData.stops.toMutableList()
-        val selectedStop = newStops.removeAt(stopIndex)
-
-        // Swap: selectedStop becomes the new destination, old destination becomes a stop at the same index
-        val oldDestination = currentData.destination
-        newStops.add(stopIndex, oldDestination)
-
-        val updatedData = currentData.copy(
-            origin = currentData.origin,
-            destination = selectedStop,
-            stops = newStops
-        )
-
-        // Show loading state and keep sheet visible
-        _state.update {
-            it.copy(
-                directionData = updatedData.copy(routes = emptyList()),
-                polylines = emptyList(),
-                bottomSheetState = BottomSheetState.DirectionInitial(updatedData)
-            )
-        }
-
-        // Regenerate real routes
-        viewModelScope.launch {
-            val result = repository.calculateRouteWithStops(updatedData.origin, updatedData.destination, updatedData.stops, mode = "walk")
-            result.onSuccess { routes ->
-                val finalData = updatedData.copy(routes = routes, selectedRouteIndex = 0)
-                val newPolylines = routes.map { route -> PolylineData(routeId = route.id, coordinates = route.polylineCoordinates, isPrimary = route.isPrimary) }
-
-                _state.update {
-                    it.copy(
-                        directionData = finalData,
-                        polylines = newPolylines,
-                        bottomSheetState = BottomSheetState.DirectionInitial(finalData)
-                    )
-                }
-            }.onFailure { error ->
-                android.util.Log.e("MapViewModel", "Failed to calculate route after swap stop/destination: ${error.message}", error)
-                _state.update { it.copy(bottomSheetState = BottomSheetState.DirectionInitial(updatedData), searchUiState = SearchUiState.Error(query = "", message = "Getting route failed.")) }
-            }
-        }
+        stopManager.onSwapStopWithDestination(stopIndex)
     }
 
     /**
      * Move a stop up in the stops list (swap with previous stop)
      */
     fun onMoveStopUp(index: Int) {
-        val currentData = _state.value.directionData ?: return
-        if (index <= 0 || index >= currentData.stops.size) return
-
-        val newStops = currentData.stops.toMutableList()
-        val tmp = newStops[index - 1]
-        newStops[index - 1] = newStops[index]
-        newStops[index] = tmp
-
-        val updatedData = currentData.copy(stops = newStops)
-
-        // Show loading state
-        _state.update { it.copy(directionData = updatedData.copy(routes = emptyList()), polylines = emptyList(), bottomSheetState = BottomSheetState.DirectionInitial(updatedData)) }
-
-        viewModelScope.launch {
-            val result = repository.calculateRouteWithStops(updatedData.origin, updatedData.destination, updatedData.stops, mode = "walk")
-            result.onSuccess { routes ->
-                val finalData = updatedData.copy(routes = routes, selectedRouteIndex = 0)
-                val newPolylines = routes.map { route -> PolylineData(routeId = route.id, coordinates = route.polylineCoordinates, isPrimary = route.isPrimary) }
-                _state.update { it.copy(directionData = finalData, polylines = newPolylines, bottomSheetState = BottomSheetState.DirectionInitial(finalData)) }
-            }.onFailure { error ->
-                android.util.Log.e("MapViewModel", "Failed to calculate route after moving stop up: ${error.message}", error)
-                _state.update { it.copy(bottomSheetState = BottomSheetState.DirectionInitial(updatedData), searchUiState = SearchUiState.Error(query = "", message = "Getting route failed.")) }
-            }
-        }
+        stopManager.onMoveStopUp(index)
     }
 
     /**
      * Move a stop down in the stops list (swap with next stop)
      */
     fun onMoveStopDown(index: Int) {
-        val currentData = _state.value.directionData ?: return
-        if (index < 0 || index >= currentData.stops.size - 1) return
-
-        val newStops = currentData.stops.toMutableList()
-        val tmp = newStops[index + 1]
-        newStops[index + 1] = newStops[index]
-        newStops[index] = tmp
-
-        val updatedData = currentData.copy(stops = newStops)
-
-        // Show loading state
-        _state.update { it.copy(directionData = updatedData.copy(routes = emptyList()), polylines = emptyList(), bottomSheetState = BottomSheetState.DirectionInitial(updatedData)) }
-
-        viewModelScope.launch {
-            val result = repository.calculateRouteWithStops(updatedData.origin, updatedData.destination, updatedData.stops, mode = "walk")
-            result.onSuccess { routes ->
-                val finalData = updatedData.copy(routes = routes, selectedRouteIndex = 0)
-                val newPolylines = routes.map { route -> PolylineData(routeId = route.id, coordinates = route.polylineCoordinates, isPrimary = route.isPrimary) }
-                _state.update { it.copy(directionData = finalData, polylines = newPolylines, bottomSheetState = BottomSheetState.DirectionInitial(finalData)) }
-            }.onFailure { error ->
-                android.util.Log.e("MapViewModel", "Failed to calculate route after moving stop down: ${error.message}", error)
-                _state.update { it.copy(bottomSheetState = BottomSheetState.DirectionInitial(updatedData), searchUiState = SearchUiState.Error(query = "", message = "Getting route failed.")) }
-            }
-        }
+        stopManager.onMoveStopDown(index)
     }
 
     /**
      * Move destination up to become the last stop (swap destination with last stop)
      */
     fun onMoveDestinationUp() {
-        val currentData = _state.value.directionData ?: return
-        val stops = currentData.stops.toMutableList()
-        if (stops.isEmpty()) return
-
-        val oldDestination = currentData.destination
-        val lastStop = stops.removeAt(stops.lastIndex)
-
-        // New destination becomes lastStop, old destination appended as a stop at end
-        stops.add(oldDestination)
-
-        val updatedData = currentData.copy(destination = lastStop, stops = stops)
-
-        // Show loading state
-        _state.update { it.copy(directionData = updatedData.copy(routes = emptyList()), polylines = emptyList(), bottomSheetState = BottomSheetState.DirectionInitial(updatedData)) }
-
-        viewModelScope.launch {
-            val result = repository.calculateRouteWithStops(updatedData.origin, updatedData.destination, updatedData.stops, mode = "walk")
-            result.onSuccess { routes ->
-                val finalData = updatedData.copy(routes = routes, selectedRouteIndex = 0)
-                val newPolylines = routes.map { route -> PolylineData(routeId = route.id, coordinates = route.polylineCoordinates, isPrimary = route.isPrimary) }
-                _state.update { it.copy(directionData = finalData, polylines = newPolylines, bottomSheetState = BottomSheetState.DirectionInitial(finalData)) }
-            }.onFailure { error ->
-                android.util.Log.e("MapViewModel", "Failed to calculate route after moving destination up: ${error.message}", error)
-                _state.update { it.copy(bottomSheetState = BottomSheetState.DirectionInitial(updatedData), searchUiState = SearchUiState.Error(query = "", message = "Getting route failed.")) }
-            }
-        }
+        stopManager.onMoveDestinationUp()
     }
 
     /**
@@ -979,312 +810,28 @@ class MapViewModel(
         _state.update { it.copy(isOverlayPanelExpanded = isExpanded) }
     }
 
-    private fun startLocationUpdates() {
-        // Start GPS location updates using FusedLocationProviderClient
-        locationProvider.startLocationUpdates { location ->
-            // Update state with real GPS location
-            _state.update {
-                it.copy(
-                    currentLocation = Location(
-                        latitude = location.latitude,
-                        longitude = location.longitude
-                    )
-                )
-            }
+    fun startLocationUpdates() {
+        locationController.startLocationUpdates()
+    }
 
-            // Fetch reverse geocoded location for display
-            fetchReverseGeocodedLocation(location.latitude, location.longitude)
-        }
+    fun stopLocationUpdates() {
+        locationController.stopLocationUpdates()
     }
 
     /**
-     * Fetches reverse geocoded location to display readable location name
-     * Only updates if user has moved significant distance (50+ meters)
+     * Called when the ViewModel is cleared
+     * Stops location updates and navigation
      */
-    private fun fetchReverseGeocodedLocation(latitude: Double, longitude: Double) {
-        // Check if we need to update based on distance moved
-        lastReverseGeocodedLatLng?.let { (lastLat, lastLon) ->
-            val distanceMoved = DistanceUtils.calculateDistance(
-                lat1 = lastLat,
-                lon1 = lastLon,
-                lat2 = latitude,
-                lon2 = longitude
-            )
-
-            // If moved less than threshold, don't update
-            if (distanceMoved < MIN_DISTANCE_FOR_UPDATE_METERS) {
-                return
-            }
-        }
-
-        viewModelScope.launch {
-            // Set loading state
-            _state.update { it.copy(reverseGeocodedLocation = ReverseGeocodedLocation.loading()) }
-
-            val result = repository.reverseGeocodeLocation(latitude, longitude, radius = 100)
-            result.onSuccess { geocodedLocation ->
-                _state.update { it.copy(reverseGeocodedLocation = geocodedLocation) }
-                // Update last geocoded position
-                lastReverseGeocodedLatLng = Pair(latitude, longitude)
-            }.onFailure {
-                _state.update { it.copy(reverseGeocodedLocation = ReverseGeocodedLocation.unknown()) }
-            }
-        }
-    }
-
-    // ============================================
-    // Navigation Methods
-    // ============================================
-
-    /**
-     * Start active navigation with GPS tracking and step threshold detection.
-     * Initializes navigation state with the first step and begins location tracking.
-     */
-    fun startNavigation() {
-        val dirData = _state.value.directionData ?: return
-        val selectedRoute = dirData.getSelectedRoute() ?: return
-
-        if (selectedRoute.steps.isEmpty()) {
-            android.util.Log.w("MapViewModel", "Cannot start navigation: no steps in route")
-            return
-        }
-
-        // Debug: Log route steps for verification
-        android.util.Log.d("MapViewModel", "Starting navigation with ${selectedRoute.steps.size} steps:")
-        selectedRoute.steps.forEachIndexed { index, step ->
-            android.util.Log.d("MapViewModel", "Step $index: ${step.instruction} at (${step.latitude}, ${step.longitude})")
-        }
-
-        // Initialize navigation progress manager
-        navigationProgressManager = com.example.lakbaylaya.ui.screens.map.navigation.progress.NavigationProgressManager().apply {
-            // Set thresholds for step advancement
-            setStepThreshold(5.0) // 5 meters to advance step (more responsive for walking)
-            setGpsAccuracyThreshold(15.0) // Only use GPS with accuracy better than 15m
-
-            // Start navigation with callbacks
-            startNavigation(
-                route = selectedRoute,
-                onStepAdvanced = { step, stepIndex ->
-                    onNavigationStepAdvanced(step, stepIndex)
-                },
-                onProgressUpdate = { stepDistance, totalDistance ->
-                    onNavigationProgressUpdate(stepDistance, totalDistance)
-                },
-                onNavigationComplete = {
-                    onNavigationComplete()
-                },
-                // Wire destination arrival to mark navigation complete and update UI
-                onDestinationArrived = {
-                    // When arrival detector fires, treat as navigation complete
-                    onNavigationComplete()
-                }
-            )
-        }
-
-        // Create active navigation state with the first step immediately available
-        val initialStep = selectedRoute.steps.firstOrNull()
-        val navigationState = NavigationState.Active(
-            currentStepIndex = 0,
-            routeOption = selectedRoute,
-            currentLocation = _state.value.currentLocation?.let { loc ->
-                android.location.Location("").apply {
-                    latitude = loc.latitude
-                    longitude = loc.longitude
-                }
-            },
-            distanceCovered = 0.0,
-            totalDistanceCovered = 0.0,
-            stepCount = 0,
-            isMuted = false,
-            mapMode = MapViewMode.MODE_2D,
-            isLocationTracking = false
-        )
-
-        _state.update {
-            it.copy(
-                navigationState = navigationState,
-                // Hide direction bottom sheet when navigation starts
-                bottomSheetState = BottomSheetState.Hidden
-            )
-        }
-
-        android.util.Log.d("MapViewModel", "Navigation started with ${selectedRoute.steps.size} steps")
-
-        // Log first step for immediate display
-        initialStep?.let { step ->
-            android.util.Log.d("MapViewModel", "Initial step ready: ${step.instruction}")
-        }
-    }
-
-    /**
-     * Update user location during navigation
-     * This method should be called from MapScreen when GPS location updates
-     */
-    fun updateNavigationLocation(location: android.location.Location) {
-        val navState = _state.value.navigationState
-        if (navState !is NavigationState.Active) return
-
-        android.util.Log.d("MapViewModel", "GPS Update: ${location.latitude}, ${location.longitude}, accuracy: ${location.accuracy}m")
-
-        // Update navigation state with new location
-        _state.update {
-            it.copy(navigationState = navState.updateLocation(location))
-        }
-
-        // Update progress manager with new location for step threshold detection
-        navigationProgressManager?.updateLocation(location)
-
-        // If the progress manager reports we're within the destination threshold,
-        // treat that as arrival and mark navigation completed so UI can show Done.
-        try {
-            val withinThreshold = navigationProgressManager?.isWithinDestinationThreshold() == true
-            if (withinThreshold) {
-                android.util.Log.d("MapViewModel", "Detected within destination threshold - marking navigation complete")
-                onNavigationComplete()
-            } else {
-                // Fallback: check raw distance to destination if available and within a small buffer (25m)
-                val distanceToDest = navigationProgressManager?.getDistanceToDestination()
-                if (distanceToDest != null && distanceToDest <= 25.0) {
-                    android.util.Log.d("MapViewModel", "Distance to destination ${distanceToDest}m <= 25m - marking navigation complete (fallback)")
-                    onNavigationComplete()
-                }
-            }
-        } catch (e: Exception) {
-            android.util.Log.e("MapViewModel", "Error checking arrival threshold: ${e.message}", e)
-        }
-
-        android.util.Log.d("MapViewModel", "Navigation location updated and sent to progress manager")
-    }
-
-    /**
-     * Update step count from pedometer (for UI display)
-     */
-    fun updateNavigationStepCount(stepCount: Int) {
-        val navState = _state.value.navigationState
-        if (navState !is NavigationState.Active) return
-
-        _state.update {
-            it.copy(navigationState = navState.updateStepCount(stepCount))
-        }
-    }
-
-    /**
-     * Called when navigation step is automatically advanced due to GPS threshold
-     */
-    private fun onNavigationStepAdvanced(step: DirectionStep, stepIndex: Int) {
-        val navState = _state.value.navigationState
-        if (navState !is NavigationState.Active) return
-
-        val newNavState = navState.copy(
-            currentStepIndex = stepIndex,
-            distanceCovered = 0.0 // Reset step distance
-        )
-
-        _state.update {
-            it.copy(navigationState = newNavState)
-        }
-
-        android.util.Log.d("MapViewModel", "Advanced to step $stepIndex: ${step.instruction}")
-    }
-
-    /**
-     * Called when navigation progress is updated
-     */
-    private fun onNavigationProgressUpdate(stepDistance: Double, totalDistance: Double) {
-        val navState = _state.value.navigationState
-        if (navState !is NavigationState.Active) return
-
-        val newNavState = navState.updateStepDistance(stepDistance, totalDistance)
-
-        _state.update {
-            it.copy(navigationState = newNavState)
-        }
-    }
-
-    /**
-     * Called when navigation is complete
-     */
-    private fun onNavigationComplete() {
-        val navState = _state.value.navigationState
-        if (navState !is NavigationState.Active) return
-
-        // Mark navigation as completed so UI can show Done state
-        val completedState = navState.copy(isCompleted = true)
-        _state.update {
-            it.copy(navigationState = completedState)
-        }
-
-        // Stop internal progress manager to free resources
-        navigationProgressManager?.stopNavigation()
-
-        android.util.Log.d("MapViewModel", "Navigation completed - marked as completed in state")
-    }
-
-    /**
-     * Stop active navigation and return to direction preview mode
-     */
-    fun stopNavigation() {
-        navigationProgressManager?.stopNavigation()
-        _state.update {
-            it.copy(
-                navigationState = NavigationState.Inactive,
-                // Restore direction bottom sheet
-                bottomSheetState = it.directionData?.let { data ->
-                    BottomSheetState.DirectionInitial(data)
-                } ?: BottomSheetState.Hidden
-            )
-        }
-
-        android.util.Log.d("MapViewModel", "Navigation stopped")
-    }
-
-    /**
-     * Finish navigation explicitly (Done action): stop navigation,
-     * close navigation UI, show user location bottom sheet and the search bar
-     */
-    fun finishNavigation() {
-        navigationProgressManager?.stopNavigation()
-        _state.update {
-            it.copy(
-                navigationState = NavigationState.Inactive,
-                bottomSheetState = BottomSheetState.Hidden,
-                isSearchOverlayActive = false,
-                uiMode = UiMode.Normal
-            )
-        }
-
-        android.util.Log.d("MapViewModel", "Navigation finished (Done) - returned to normal mode")
-    }
-
-    /**
-     * Toggle mute/unmute for voice guidance
-     */
-    fun toggleNavigationMute() {
-        val navState = _state.value.navigationState
-        if (navState !is NavigationState.Active) return
-
-        _state.update {
-            it.copy(navigationState = navState.toggleMute())
-        }
-    }
-
-    /**
-     * Toggle between 2D and 3D map modes
-     */
-    fun toggleNavigationMapMode() {
-        val navState = _state.value.navigationState
-        if (navState !is NavigationState.Active) return
-
-        _state.update {
-            it.copy(navigationState = navState.toggleMapMode())
-        }
-    }
-
     override fun onCleared() {
         super.onCleared()
-        searchDebouncer.cancel()
-        locationProvider.stopLocationUpdates()
-        navigationProgressManager?.stopNavigation()
+        stopLocationUpdates()
+        navigationManager.stopNavigation()
+        // Shutdown voice manager used by this ViewModel
+        try {
+            voiceManager.shutdown()
+        } catch (e: Exception) {
+            android.util.Log.w("MapViewModel", "TTS shutdown failed: ${e.message}")
+        }
     }
 
     /**
@@ -1344,6 +891,70 @@ class MapViewModel(
                     )
                 }
             }
+        }
+    }
+
+    // ============================================
+    // Navigation Methods
+
+    fun startNavigation() {
+        navigationManager.startNavigation()
+    }
+
+    /**
+     * Called from MapScreen when GPS location updates arrive during navigation
+     */
+    fun updateNavigationLocation(location: android.location.Location) {
+        navigationManager.updateNavigationLocation(location)
+    }
+
+    /** Update step count from pedometer (UI stats) */
+    fun updateNavigationStepCount(stepCount: Int) {
+        navigationManager.updateNavigationStepCount(stepCount)
+    }
+
+    /** Stop active navigation and return to direction preview mode */
+    fun stopNavigation() {
+        navigationManager.stopNavigation()
+    }
+
+    /** Finish navigation explicitly (Done action) */
+    fun finishNavigation() {
+        navigationManager.finishNavigation()
+    }
+
+    /**
+     * Mute/unmute navigation voice guidance
+     */
+    fun toggleNavigationMute() {
+        val navState = _state.value.navigationState
+        if (navState !is NavigationState.Active) return
+
+        _state.update {
+            it.copy(navigationState = navState.toggleMute())
+        }
+    }
+
+    /**
+     * Clears pending voice notes place after navigation is handled.
+     */
+    fun clearPendingVoiceNotesPlace() {
+        _state.update {
+            it.copy(pendingVoiceNotesPlace = null)
+        }
+    }
+
+    /**
+     * Test method to manually trigger arrival (for debugging arrival detection issues)
+     * This should immediately show "You have arrived!" and the Done button
+     */
+    fun testArrival() {
+        val navState = state.value.navigationState
+        if (navState is NavigationState.Active) {
+            android.util.Log.i("MapViewModel", "🧪 TEST: Manually triggering arrival for debugging")
+            navigationManager.testArrival()
+        } else {
+            android.util.Log.w("MapViewModel", "Cannot test arrival - navigation not active")
         }
     }
 }

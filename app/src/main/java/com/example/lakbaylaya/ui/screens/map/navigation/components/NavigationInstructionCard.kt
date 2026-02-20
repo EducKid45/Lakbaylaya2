@@ -3,18 +3,21 @@ package com.example.lakbaylaya.ui.screens.map.navigation.components
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.lakbaylaya.ui.screens.map.models.DirectionStep
-import com.example.lakbaylaya.ui.screens.map.utils.DirectionIconMapper
+import com.example.lakbaylaya.utils.DirectionIconMapper
 
 /**
  * Navigation instruction overlay card displayed at the top of the screen
@@ -27,31 +30,51 @@ import com.example.lakbaylaya.ui.screens.map.utils.DirectionIconMapper
  * - Maneuver icon for visual guidance
  * - Clickable to zoom to step location and repeat instruction via TTS
  * - Material 3 design with proper elevation and colors
+ * - Special arrival styling when navigation is complete
  *
  * @param step Current navigation step to display
  * @param onClick Callback when card is clicked (zoom + TTS)
  * @param modifier Modifier for customization
+ * @param isArrival Whether this is showing the arrival message
  */
 @Composable
 fun NavigationInstructionCard(
     step: DirectionStep,
     onClick: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    isArrival: Boolean = false
 ) {
+    // Use special styling for arrival
+    val containerColor = if (isArrival) {
+        MaterialTheme.colorScheme.primaryContainer
+    } else {
+        MaterialTheme.colorScheme.primaryContainer
+    }
+
+    val textColor = if (isArrival) {
+        MaterialTheme.colorScheme.onPrimaryContainer
+    } else {
+        MaterialTheme.colorScheme.onPrimaryContainer
+    }
+
     Surface(
         modifier = modifier
             .fillMaxWidth()
             .clickable(onClick = onClick)
             .shadow(
-                elevation = 8.dp,
+                elevation = if (isArrival) 12.dp else 8.dp,
                 shape = RoundedCornerShape(16.dp)
             )
             .semantics {
-                contentDescription = "Current instruction: ${step.instruction}. Tap to zoom and repeat instruction."
+                contentDescription = if (isArrival) {
+                    "Navigation completed: ${step.instruction}. Tap to repeat announcement."
+                } else {
+                    "Current instruction: ${step.instruction}. Tap to zoom and repeat instruction."
+                }
             },
         shape = RoundedCornerShape(16.dp),
-        color = MaterialTheme.colorScheme.primaryContainer,
-        tonalElevation = 8.dp
+        color = containerColor,
+        tonalElevation = if (isArrival) 12.dp else 8.dp
     ) {
         Row(
             modifier = Modifier
@@ -63,7 +86,11 @@ fun NavigationInstructionCard(
             // Maneuver icon (large and prominent)
             Surface(
                 shape = RoundedCornerShape(12.dp),
-                color = MaterialTheme.colorScheme.primary,
+                color = if (isArrival) {
+                    Color(0xFF4CAF50) // Green for arrival
+                } else {
+                    MaterialTheme.colorScheme.primary
+                },
                 modifier = Modifier.size(72.dp)
             ) {
                 Box(
@@ -71,9 +98,17 @@ fun NavigationInstructionCard(
                     modifier = Modifier.fillMaxSize()
                 ) {
                     Icon(
-                        imageVector = DirectionIconMapper.getIconForManeuver(step.maneuver),
-                        contentDescription = DirectionIconMapper.getContentDescription(step.maneuver),
-                        tint = MaterialTheme.colorScheme.onPrimary,
+                        imageVector = if (isArrival) {
+                            Icons.Default.CheckCircle
+                        } else {
+                            DirectionIconMapper.getIconForManeuver(step.maneuver)
+                        },
+                        contentDescription = if (isArrival) {
+                            "Arrived at destination"
+                        } else {
+                            DirectionIconMapper.getContentDescription(step.maneuver)
+                        },
+                        tint = Color.White,
                         modifier = Modifier.size(48.dp)
                     )
                 }
@@ -87,23 +122,34 @@ fun NavigationInstructionCard(
                 Text(
                     text = step.instruction,
                     style = MaterialTheme.typography.headlineSmall.copy(
-                        fontSize = 22.sp,
+                        fontSize = if (isArrival) 24.sp else 22.sp,
                         fontWeight = FontWeight.Bold,
-                        lineHeight = 28.sp
+                        lineHeight = if (isArrival) 30.sp else 28.sp
                     ),
-                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                    color = textColor,
                     maxLines = 3
                 )
 
-                // Distance for this step
-                Text(
-                    text = "in ${step.getFormattedDistance()}",
-                    style = MaterialTheme.typography.bodyLarge.copy(
-                        fontSize = 16.sp,
-                        fontWeight = FontWeight.Medium
-                    ),
-                    color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f)
-                )
+                // Distance for this step (hide for arrival)
+                if (!isArrival && step.distanceMeters > 0) {
+                    Text(
+                        text = "in ${step.getFormattedDistance()}",
+                        style = MaterialTheme.typography.bodyLarge.copy(
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.Medium
+                        ),
+                        color = textColor.copy(alpha = 0.8f)
+                    )
+                } else if (isArrival) {
+                    Text(
+                        text = "Tap to hear announcement again",
+                        style = MaterialTheme.typography.bodyMedium.copy(
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Medium
+                        ),
+                        color = textColor.copy(alpha = 0.7f)
+                    )
+                }
             }
         }
     }
@@ -117,22 +163,33 @@ fun NavigationInstructionCard(
 fun CompactNavigationInstructionCard(
     step: DirectionStep,
     onClick: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    isArrival: Boolean = false
 ) {
+    val containerColor = if (isArrival) {
+        MaterialTheme.colorScheme.primaryContainer
+    } else {
+        MaterialTheme.colorScheme.primaryContainer
+    }
+
     Surface(
         modifier = modifier
             .fillMaxWidth()
             .clickable(onClick = onClick)
             .shadow(
-                elevation = 6.dp,
+                elevation = if (isArrival) 8.dp else 6.dp,
                 shape = RoundedCornerShape(12.dp)
             )
             .semantics {
-                contentDescription = "Current instruction: ${step.instruction}"
+                contentDescription = if (isArrival) {
+                    "Navigation completed: ${step.instruction}"
+                } else {
+                    "Current instruction: ${step.instruction}"
+                }
             },
         shape = RoundedCornerShape(12.dp),
-        color = MaterialTheme.colorScheme.primaryContainer,
-        tonalElevation = 6.dp
+        color = containerColor,
+        tonalElevation = if (isArrival) 8.dp else 6.dp
     ) {
         Row(
             modifier = Modifier
@@ -143,9 +200,17 @@ fun CompactNavigationInstructionCard(
         ) {
             // Smaller icon
             Icon(
-                imageVector = DirectionIconMapper.getIconForManeuver(step.maneuver),
+                imageVector = if (isArrival) {
+                    Icons.Default.CheckCircle
+                } else {
+                    DirectionIconMapper.getIconForManeuver(step.maneuver)
+                },
                 contentDescription = null,
-                tint = MaterialTheme.colorScheme.primary,
+                tint = if (isArrival) {
+                    Color(0xFF4CAF50) // Green for arrival
+                } else {
+                    MaterialTheme.colorScheme.primary
+                },
                 modifier = Modifier.size(36.dp)
             )
 
@@ -163,14 +228,14 @@ fun CompactNavigationInstructionCard(
                     maxLines = 2
                 )
 
-                Text(
-                    text = step.getFormattedDistance(),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
-                )
+                if (!isArrival && step.distanceMeters > 0) {
+                    Text(
+                        text = step.getFormattedDistance(),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
+                    )
+                }
             }
         }
     }
 }
-
-

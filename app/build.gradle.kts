@@ -4,6 +4,9 @@ plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.compose.compiler)
     alias(libs.plugins.kotlinx.serialization)
+    alias(libs.plugins.ksp.room)
+    alias(libs.plugins.google.gms.google.services)
+    alias(libs.plugins.google.firebase.crashlytics)
 }
 
 // Read GEOAPIFY_API_KEY from root/local.properties or fallback to environment variable
@@ -45,6 +48,22 @@ android {
             )
         }
     }
+
+    // Add a flavor dimension and two flavors: play (default) and sideload (allows on-device SMS)
+    flavorDimensions += "mode"
+    productFlavors {
+        create("play") {
+            dimension = "mode"
+            // By default, do not enable on-device SMS
+            buildConfigField("boolean", "SIDELOAD_SMS", "false")
+        }
+        create("sideload") {
+            dimension = "mode"
+            // Enable on-device SMS for sideload builds
+            buildConfigField("boolean", "SIDELOAD_SMS", "true")
+        }
+    }
+
     buildFeatures {
         compose = true
         // Enable BuildConfig so buildConfigField in defaultConfig is generated
@@ -61,11 +80,18 @@ dependencies {
     implementation(libs.maplibre.android.sdk)
 
     implementation(libs.androidx.compose.foundation)
+    // Use Firebase BoM to manage Firebase library versions and add functions-ktx without explicit version
+    implementation(platform("com.google.firebase:firebase-bom:34.9.0"))
+    implementation("com.google.firebase:firebase-functions-ktx:20.3.0")
+
     // OkHttp for network requests (required by MapLibre and Geoapify)
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
 
     // Gson for JSON parsing
     implementation("com.google.code.gson:gson:2.10.1")
+
+    // Kotlin Serialization for JSON handling (voice notes mapping)
+    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.2")
 
     // Google Play Services for GPS location
     implementation(libs.play.services.location)
@@ -83,6 +109,12 @@ dependencies {
     implementation(libs.accompanist.systemuicontroller)
     implementation(libs.androidx.appcompat)
     implementation(libs.material)
+
+    // Room (local database) - using KSP for annotation processing
+    implementation("androidx.room:room-runtime:2.8.4")
+    implementation("androidx.room:room-ktx:2.8.4")
+    implementation(libs.firebase.crashlytics)
+    ksp("androidx.room:room-compiler:2.8.4")
 
     // Annotation library (AndroidX) - provides @Nullable, @NonNull, @SuppressLint, etc.
     implementation("androidx.annotation:annotation:1.6.0")

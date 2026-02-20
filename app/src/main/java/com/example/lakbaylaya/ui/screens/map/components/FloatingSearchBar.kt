@@ -55,6 +55,7 @@ import androidx.compose.ui.unit.dp
 fun FloatingSearchBar(
     query: String,
     isOverlayActive: Boolean,
+    isMicActive: Boolean = false,
     onQueryChange: (String) -> Unit,
     onSearchBarClick: () -> Unit,
     onBackClick: () -> Unit,
@@ -226,18 +227,23 @@ fun FloatingSearchBar(
                         )
                     }
                 } else {
+                    // Show mic as active/inactive by tint and content description
                     IconButton(
                         onClick = onMicClick,
                         modifier = Modifier
                             .size(48.dp)
                             .semantics {
-                                contentDescription = "Voice search"
+                                contentDescription =
+                                    if (isMicActive) "Stop voice search" else "Start voice search"
                             }
                     ) {
                         Icon(
                             imageVector = Icons.Default.Mic,
                             contentDescription = "Microphone",
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                            tint = if (isMicActive)
+                                MaterialTheme.colorScheme.primary
+                            else
+                                MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                 }
