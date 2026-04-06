@@ -1,5 +1,6 @@
 package com.example.lakbaylaya.ui.screens.route
 
+import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import com.example.lakbaylaya.data.repository.RoutesRepository
@@ -10,12 +11,13 @@ import com.example.lakbaylaya.data.repository.CustomMarkerRepository
 class RoutesViewModelFactory(
     private val routesRepo: RoutesRepository?,
     private val placesRepo: SavedPlaceRepository?,
-    private val markersRepo: CustomMarkerRepository?
+    private val markersRepo: CustomMarkerRepository?,
+    private val context: Context? = null
 ) : ViewModelProvider.Factory {
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
         if (modelClass.isAssignableFrom(RoutesViewModel::class.java)) {
             @Suppress("UNCHECKED_CAST")
-            return RoutesViewModel(routesRepo, placesRepo, markersRepo) as T
+            return RoutesViewModel(routesRepo, placesRepo, markersRepo, context) as T
         }
         throw IllegalArgumentException("Unknown ViewModel class")
     }

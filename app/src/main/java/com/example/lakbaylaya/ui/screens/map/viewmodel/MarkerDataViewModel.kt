@@ -5,21 +5,18 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.lakbaylaya.data.room.AppDatabase
 import com.example.lakbaylaya.data.room.LandmarkEntity
-import com.example.lakbaylaya.data.room.LandmarkVoiceNoteCrossRef
-import com.example.lakbaylaya.data.room.VoiceNoteEntity
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.launch
 
 /**
- * ViewModel for managing marker landmarks and voice notes persistence.
+ * ViewModel for managing marker landmarks persistence.
+ * Voice notes have been removed.
  */
 class MarkerDataViewModel(application: Application) : AndroidViewModel(application) {
     private val database = AppDatabase.getInstance(application)
     private val landmarkDao = database.landmarkDao()
-    private val voiceNoteDao = database.voiceNoteDao()
 
     val allLandmarks: Flow<List<LandmarkEntity>> = landmarkDao.getAllLandmarks()
-    val allVoiceNotes: Flow<List<VoiceNoteEntity>> = voiceNoteDao.getAllVoiceNotes()
 
     /**
      * Save a landmark marker to the database.
@@ -44,58 +41,18 @@ class MarkerDataViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
 
-    /**
-     * Save a voice note to the database.
-     */
+    /** No-op kept for compatibility */
+    @Suppress("UNUSED_PARAMETER")
     fun saveVoiceNote(
-        latitude: Double,
-        longitude: Double,
-        locationName: String,
-        audioFilePath: String,
-        transcription: String,
-        durationSeconds: Int
-    ) {
-        viewModelScope.launch {
-            val voiceNote = VoiceNoteEntity(
-                id = System.currentTimeMillis().toString(),
-                latitude = latitude,
-                longitude = longitude,
-                locationName = locationName,
-                audioFilePath = audioFilePath,
-                transcription = transcription,
-                durationSeconds = durationSeconds
-            )
-            voiceNoteDao.insertVoiceNote(voiceNote)
-        }
-    }
+        latitude: Double, longitude: Double, locationName: String,
+        audioFilePath: String, transcription: String, durationSeconds: Int
+    ) { /* Voice notes removed */ }
 
-    /**
-     * Attach a voice note to a landmark.
-     */
-    fun attachVoiceNoteToLandmark(landmarkId: String, voiceNoteId: String) {
-        viewModelScope.launch {
-            val crossRef = LandmarkVoiceNoteCrossRef(
-                landmarkId = landmarkId,
-                voiceNoteId = voiceNoteId
-            )
-            landmarkDao.insertLandmarkVoiceNoteCrossRef(crossRef)
-        }
-    }
+    /** No-op kept for compatibility */
+    @Suppress("UNUSED_PARAMETER")
+    fun attachVoiceNoteToLandmark(landmarkId: String, voiceNoteId: String) { /* Voice notes removed */ }
 
-    /**
-     * Delete a voice note from the database.
-     */
-    fun deleteVoiceNote(voiceNoteId: String) {
-        viewModelScope.launch {
-            voiceNoteDao.deleteVoiceNoteById(voiceNoteId)
-        }
-    }
-
-    /**
-     * Get voice notes for a specific landmark.
-     */
-    fun getVoiceNotesForLandmark(landmarkId: String): Flow<List<VoiceNoteEntity>> {
-        return landmarkDao.getVoiceNotesForLandmark(landmarkId)
-    }
+    /** No-op kept for compatibility */
+    @Suppress("UNUSED_PARAMETER")
+    fun deleteVoiceNote(voiceNoteId: String) { /* Voice notes removed */ }
 }
-

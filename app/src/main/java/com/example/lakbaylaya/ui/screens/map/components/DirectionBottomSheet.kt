@@ -81,7 +81,9 @@ fun DirectionBottomSheet(
     bottomNavigationHeight: Dp = 80.dp,
     onClose: () -> Unit = {}, // Called when user presses the close X to exit directions mode
     onStartNavigation: () -> Unit = {}, // Called when user presses the Start button to begin navigation
-    onSaveRoute: () -> Unit = {} // Called when user presses the Save button to save the route
+    onSaveRoute: (DirectionData) -> Unit = {}, // Provide the full DirectionData for saving
+    /** Called when user taps the speaker icon on an individual direction step. */
+    onSpeakStep: ((String) -> Unit)? = null
 ) {
     // Only render for Direction states
     val directionData = when (sheetState) {
@@ -229,7 +231,8 @@ fun DirectionBottomSheet(
                             directionData = directionData,
                             onAddStopsClick = onAddStopsClick,
                             onStartNavigation = onStartNavigation,
-                            onSaveRoute = onSaveRoute
+                            onSaveRoute = { onSaveRoute(directionData) },
+                            onSpeakStep = onSpeakStep
                         )
                     }
                 } else {
@@ -241,7 +244,7 @@ fun DirectionBottomSheet(
                         onAddStopsClick = onAddStopsClick,
                         isEditingStops = isEditingStops,
                         onStartNavigation = onStartNavigation,
-                        onSaveRoute = onSaveRoute
+                        onSaveRoute = { onSaveRoute(directionData) }
                     )
                 }
             }
@@ -477,7 +480,8 @@ private fun DirectionInitialContent(
 private fun LoadingRouteCard() {
     Surface(
         shape = RoundedCornerShape(16.dp),
-        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f),
+        color = Color.White,
+        shadowElevation = 2.dp,
         modifier = Modifier.fillMaxWidth()
     ) {
         Column(
@@ -568,7 +572,8 @@ private fun DirectionFullContent(
     directionData: DirectionData,
     onAddStopsClick: () -> Unit = {},
     onStartNavigation: () -> Unit = {},
-    onSaveRoute: () -> Unit = {}
+    onSaveRoute: () -> Unit = {},
+    onSpeakStep: ((String) -> Unit)? = null
 ) {
     val listState = rememberLazyListState()
 
@@ -634,7 +639,7 @@ private fun DirectionFullContent(
                             items = segment.steps,
                             key = { step -> "segment_${segmentIndex}_step_${step.instruction}_${step.distanceMeters}" }
                         ) { step ->
-                            DirectionStepItem(step = step)
+                            DirectionStepItem(step = step, onSpeakStep = onSpeakStep)
                             Spacer(modifier = Modifier.height(12.dp))
                         }
                     }
@@ -808,7 +813,8 @@ private fun RouteSummaryCard(
 ) {
     Surface(
         shape = RoundedCornerShape(12.dp),
-        color = MaterialTheme.colorScheme.primaryContainer,
+        color = Color.White,
+        shadowElevation = 2.dp,
         modifier = Modifier.fillMaxWidth()
     ) {
         Row(
@@ -818,7 +824,6 @@ private fun RouteSummaryCard(
             horizontalArrangement = Arrangement.SpaceEvenly,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // Equal weight for each summary item
             TimeSummaryItem(
                 totalMinutes = route.totalDurationMinutes,
                 modifier = Modifier.weight(1f)
@@ -828,7 +833,7 @@ private fun RouteSummaryCard(
                 modifier = Modifier
                     .height(40.dp)
                     .width(1.dp),
-                color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.3f)
+                color = Color(0xFFEEEEEE)
             )
 
             SummaryItem(
@@ -842,7 +847,7 @@ private fun RouteSummaryCard(
                 modifier = Modifier
                     .height(40.dp)
                     .width(1.dp),
-                color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.3f)
+                color = Color(0xFFEEEEEE)
             )
 
             SummaryItem(
@@ -874,45 +879,40 @@ private fun TimeSummaryItem(
         Icon(
             imageVector = Icons.Default.Schedule,
             contentDescription = "Time",
-            tint = MaterialTheme.colorScheme.onPrimaryContainer,
+            tint = MaterialTheme.colorScheme.onSurface,
             modifier = Modifier.size(28.dp)
         )
 
         Spacer(modifier = Modifier.height(6.dp))
 
         if (hours > 0) {
-            // Show hours first line
             Text(
                 text = "${hours} hr",
                 style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.onPrimaryContainer
+                color = MaterialTheme.colorScheme.onSurface
             )
-
-            // Show minutes on second line (if any)
             if (minutes > 0) {
                 Text(
                     text = "${minutes} min",
                     style = MaterialTheme.typography.titleLarge,
                     fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                    color = MaterialTheme.colorScheme.onSurface
                 )
             }
         } else {
-            // Only minutes - put on first line
             Text(
                 text = "${minutes} min",
                 style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.onPrimaryContainer
+                color = MaterialTheme.colorScheme.onSurface
             )
         }
 
-        // Label
         Text(
             text = "Time",
             style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
+            color = MaterialTheme.colorScheme.onSurfaceVariant
         )
     }
 }
@@ -934,7 +934,7 @@ private fun SummaryItem(
         Icon(
             imageVector = icon,
             contentDescription = label,
-            tint = MaterialTheme.colorScheme.onPrimaryContainer,
+            tint = MaterialTheme.colorScheme.onSurface,
             modifier = Modifier.size(28.dp)
         )
         Spacer(modifier = Modifier.height(6.dp))
@@ -942,12 +942,12 @@ private fun SummaryItem(
             text = value,
             style = MaterialTheme.typography.titleLarge,
             fontWeight = FontWeight.Bold,
-            color = MaterialTheme.colorScheme.onPrimaryContainer
+            color = MaterialTheme.colorScheme.onSurface
         )
         Text(
             text = label,
             style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
+            color = MaterialTheme.colorScheme.onSurfaceVariant
         )
     }
 }
@@ -1225,66 +1225,122 @@ private fun RouteStatItem(
 
 
 /**
- * Individual direction step item
+ * Individual direction step item — shows maneuver icon, instruction text,
+ * distance/steps, and a TTS spoken-instruction chip when available.
  */
 @Composable
 private fun DirectionStepItem(
-    step: DirectionStep
+    step: DirectionStep,
+    onSpeakStep: ((String) -> Unit)? = null
 ) {
-    Row(
+    // Keep the raw instruction (from route) visible and only show the parsed/spoken
+    // instruction when it's non-empty and different from the raw instruction.
+    val rawInstruction = step.instruction.trim()
+    val parsedInstruction = step.spokenInstruction.trim()
+    val showParsed = parsedInstruction.isNotBlank() && !parsedInstruction.equals(rawInstruction, ignoreCase = true)
+
+    Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 4.dp),
-        horizontalArrangement = Arrangement.spacedBy(16.dp)
+            .padding(vertical = 4.dp)
     ) {
-        // Maneuver icon
-        Surface(
-            shape = CircleShape,
-            color = MaterialTheme.colorScheme.secondaryContainer,
-            modifier = Modifier.size(44.dp)
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            Box(
-                contentAlignment = Alignment.Center,
-                modifier = Modifier.fillMaxSize()
+            // Maneuver icon
+            Surface(
+                shape = CircleShape,
+                color = MaterialTheme.colorScheme.secondaryContainer,
+                modifier = Modifier.size(44.dp)
             ) {
-                Icon(
-                    imageVector = DirectionIconMapper.getIconForManeuver(step.maneuver),
-                    contentDescription = DirectionIconMapper.getContentDescription(step.maneuver),
-                    tint = MaterialTheme.colorScheme.onSecondaryContainer,
-                    modifier = Modifier.size(26.dp)
+                Box(
+                    contentAlignment = Alignment.Center,
+                    modifier = Modifier.fillMaxSize()
+                ) {
+                    Icon(
+                        imageVector = DirectionIconMapper.getIconForManeuver(step.maneuver),
+                        contentDescription = DirectionIconMapper.getContentDescription(step.maneuver),
+                        tint = MaterialTheme.colorScheme.onSecondaryContainer,
+                        modifier = Modifier.size(26.dp)
+                    )
+                }
+            }
+
+            // Step details: show raw instruction as primary text
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = rawInstruction,
+                    style = MaterialTheme.typography.bodyLarge,
+                    fontWeight = FontWeight.Medium,
+                    color = MaterialTheme.colorScheme.onSurface
                 )
+                Spacer(modifier = Modifier.height(6.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text(
+                        text = step.getFormattedDistance(),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Text(
+                        text = "•",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Text(
+                        text = "${step.getEstimatedSteps()} steps",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+
+            // Speaker button — play parsed instruction when available, otherwise raw instruction
+            val speakText = if (parsedInstruction.isNotBlank()) parsedInstruction else rawInstruction
+            if (speakText.isNotBlank() && onSpeakStep != null) {
+                IconButton(
+                    onClick = { onSpeakStep(speakText) },
+                    modifier = Modifier.size(40.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.VolumeUp,
+                        contentDescription = "Speak step",
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(22.dp)
+                    )
+                }
             }
         }
 
-        // Step details
-        Column(
-            modifier = Modifier.weight(1f)
-        ) {
-            Text(
-                text = step.instruction,
-                style = MaterialTheme.typography.bodyLarge,
-                fontWeight = FontWeight.Medium,
-                color = MaterialTheme.colorScheme.onSurface
-            )
+        // Only show the parsed/spoken instruction chip when it's different from the raw instruction
+        if (showParsed) {
             Spacer(modifier = Modifier.height(6.dp))
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            Surface(
+                shape = RoundedCornerShape(8.dp),
+                color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 60.dp) // align under the text column
             ) {
-                Text(
-                    text = step.getFormattedDistance(),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Text(
-                    text = "•",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Text(
-                    text = "${step.getEstimatedSteps()} steps",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+                Row(
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.RecordVoiceOver,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(14.dp)
+                    )
+                    Text(
+                        text = parsedInstruction,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer,
+                        maxLines = 3,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
             }
         }
     }

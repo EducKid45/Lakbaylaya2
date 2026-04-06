@@ -1,49 +1,54 @@
 package com.example.lakbaylaya.ui.screens.route
 
-import com.example.lakbaylaya.ui.screens.route.components.*
 import com.example.lakbaylaya.ui.screens.route.dialogs.*
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Bookmark
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material.icons.filled.Explore
+import androidx.compose.material.icons.filled.Navigation
 import androidx.compose.material.icons.filled.Place
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.Icon
-import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.PrimaryTabRow
-import androidx.compose.material3.Tab
-import androidx.compose.material3.Text
-import androidx.compose.material3.rememberModalBottomSheetState
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 
-// Preview helper: lightweight ViewModel instance used only by @Preview
 private val previewRoutesViewModel = RoutesViewModel(null, null, null)
 
-/** Renders the Routes screen UI from the provided ViewModel. */
+/**
+ * Routes screen — unified "Saved Locations" list.
+ *
+ * Both Route and Place cards share the SAME visual design:
+ *  - Tap header → expand / collapse
+ *  - Expanded: Navigate, Preview, Rename, Delete
+ *
+ * TTS reading of the full list is handled via GlobalVoiceViewModel (voice command
+ * "show routes") — no mic FAB here, no TTS in this file.
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Suppress("UNUSED_PARAMETER")
 @Composable
@@ -51,73 +56,146 @@ fun RoutesScreen(
     viewModel: RoutesViewModel,
     onPreviewRoute: (SavedRoute) -> Unit = {},
     onStartNavigation: (SavedRoute) -> Unit = {},
-    onNavigateToSettings: () -> Unit = {}
+    onNavigateToMap: (SavedPlace) -> Unit = {},
+    onNavigateToSettings: () -> Unit = {},
+    openRouteId: String? = null
 ) {
-    val uiState by viewModel.uiState.collectAsState()
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    var selectedTab by remember { mutableIntStateOf(0) }
-    val tabs = listOf("Routes", "Places", "Markers")
+    val uiState          by viewModel.uiState.collectAsState()
+    val placeInteraction by viewModel.placeInteraction.collectAsState()
 
-    // Parent `LakbayLayaApp` provides the TopBar. Treat this screen as scaffold content.
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(Color(0xFFF8F9FA))
-    ) {
-        Column(modifier = Modifier.fillMaxSize()) {
-            // Tab Row
-            PrimaryTabRow(
-                selectedTabIndex = selectedTab,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                tabs.forEachIndexed { index, title ->
-                    Tab(
-                        selected = selectedTab == index,
-                        onClick = { selectedTab = index },
-                        text = { Text(title) }
-                    )
-                }
-            }
+    var expandedItemId  by remember { mutableStateOf<String?>(null) }
+    var renamingPlaceId by remember { mutableStateOf<String?>(null) }
+    var renamingRouteId by remember { mutableStateOf<String?>(null) }
 
-            // Tab Content
-            when (selectedTab) {
-                0 -> RoutesTab(viewModel, uiState)
-                1 -> PlacesTab(viewModel, uiState)
-                2 -> MarkersTab(viewModel, uiState)
-            }
-        }
-
-        // Route detail bottom sheet
-        if (uiState.isDetailPanelVisible && uiState.selectedRoute != null) {
-            ModalBottomSheet(
-                onDismissRequest = { viewModel.closeDetailPanel() },
-                sheetState = sheetState,
-                containerColor = Color.White
-            ) {
-                RouteDetailPanel(
-                    route = uiState.selectedRoute!!,
-                    onClose = { viewModel.closeDetailPanel() },
-                    onPreview = { onPreviewRoute(uiState.selectedRoute!!) },
-                    onStartNavigation = { onStartNavigation(uiState.selectedRoute!!) },
-                    onRename = { viewModel.showRenameDialog() },
-                    onDelete = { viewModel.showDeleteDialog() },
-                    onPlayVoiceNote = { viewModel.playVoiceNote(uiState.selectedRoute!!.id) },
-                    onPlayDifficultyWarning = { viewModel.playDifficultyWarning(uiState.selectedRoute!!.id) }
-                )
-            }
+    // Auto-open route from Save flow
+    LaunchedEffect(openRouteId, uiState.savedRoutes) {
+        openRouteId?.let { id ->
+            if (uiState.savedRoutes.any { it.id == id }) expandedItemId = id
         }
     }
 
-    // Rename dialog
-    if (uiState.isRenameDialogVisible && uiState.selectedRoute != null) {
-        RenameRouteDialog(
-            currentName = uiState.selectedRoute!!.name,
-            onDismiss = { viewModel.hideRenameDialog() },
-            onConfirm = { newName -> viewModel.renameRoute(newName) }
+    // Duplicate overwrite dialog
+    val dupCandidate = placeInteraction.duplicateCandidate
+    if (dupCandidate != null) {
+        AlertDialog(
+            onDismissRequest = { viewModel.cancelOverwritePlace() },
+            icon  = { Icon(Icons.Default.Place, null, tint = Color(0xFFE53935)) },
+            title = { Text("Place Already Exists", fontWeight = FontWeight.Bold) },
+            text  = { Text("\"${dupCandidate.placeName}\" already exists. Overwrite it?") },
+            confirmButton = {
+                Button(
+                    onClick = { viewModel.confirmOverwritePlace() },
+                    colors  = ButtonDefaults.buttonColors(containerColor = Color(0xFFE53935))
+                ) { Text("Overwrite") }
+            },
+            dismissButton = {
+                TextButton(onClick = { viewModel.cancelOverwritePlace() }) { Text("Cancel") }
+            }
         )
     }
 
-    // Delete confirmation dialog
+    Box(modifier = Modifier.fillMaxSize().background(Color(0xFFF8F9FA))) {
+        if (uiState.savedLocations.isEmpty() && !uiState.isLoading) {
+            EmptySavedLocationsState()
+        } else {
+            LazyColumn(
+                modifier            = Modifier.fillMaxSize().padding(horizontal = 16.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+                contentPadding      = PaddingValues(vertical = 16.dp)
+            ) {
+                item { SavedLocationsHeader(count = uiState.savedLocations.size) }
+
+                items(items = uiState.savedLocations, key = { it.id }) { locItem ->
+                    val isExpanded = expandedItemId == locItem.id
+
+                    when (locItem.type) {
+                        LocationItemType.ROUTE -> {
+                            val route = uiState.savedRoutes.find { it.id == locItem.id }
+                            if (route != null) {
+                                SavedItemCard(
+                                    id          = route.id,
+                                    title       = route.name,
+                                    subTitle    = buildString {
+                                        append(route.startLocation)
+                                        if (route.endLocation.isNotBlank()) append(" → ${route.endLocation}")
+                                    },
+                                    typeLabel   = "Route",
+                                    icon        = Icons.Default.Explore,
+                                    accentColor = Color(0xFF1565C0),
+                                    isExpanded  = isExpanded,
+                                    isRenaming  = renamingRouteId == route.id,
+                                    currentName = route.name,
+                                    onToggle    = {
+                                        expandedItemId = if (isExpanded) null else route.id
+                                        renamingRouteId = null
+                                    },
+                                    onNavigate  = { onStartNavigation(route) },
+                                    onPreview   = { onPreviewRoute(route) },
+                                    onStartEdit = {
+                                        renamingRouteId = route.id
+                                        expandedItemId  = route.id
+                                    },
+                                    onConfirmRename = { newName ->
+                                        viewModel.selectRoute(route)
+                                        viewModel.renameRoute(newName)
+                                        renamingRouteId = null
+                                    },
+                                    onCancelRename = { renamingRouteId = null },
+                                    onDelete = {
+                                        viewModel.selectRoute(route)
+                                        viewModel.showDeleteDialog()
+                                        if (expandedItemId == route.id) expandedItemId = null
+                                    }
+                                )
+                            }
+                        }
+
+                        LocationItemType.PLACE -> {
+                            val place = uiState.savedPlaces.find { it.id == locItem.id }
+                            if (place != null) {
+                                SavedItemCard(
+                                    id          = place.id,
+                                    title       = place.placeName,
+                                    subTitle    = place.address.ifBlank {
+                                        "Lat %.5f  Lon %.5f".format(place.latitude, place.longitude)
+                                    },
+                                    typeLabel   = place.label.ifBlank { "Place" },
+                                    icon        = Icons.Default.Place,
+                                    accentColor = Color(0xFF006C4C),
+                                    isExpanded  = isExpanded,
+                                    isRenaming  = renamingPlaceId == place.id,
+                                    currentName = place.placeName,
+                                    onToggle    = {
+                                        expandedItemId = if (isExpanded) null else place.id
+                                        renamingPlaceId = null
+                                    },
+                                    onNavigate  = { onNavigateToMap(place) },
+                                    onPreview   = { onNavigateToMap(place) },
+                                    onStartEdit = {
+                                        renamingPlaceId = place.id
+                                        expandedItemId  = place.id
+                                    },
+                                    onConfirmRename = { newName ->
+                                        viewModel.confirmRenamePlace(place.id, newName, place.label)
+                                        renamingPlaceId = null
+                                    },
+                                    onCancelRename = { renamingPlaceId = null },
+                                    onDelete = {
+                                        viewModel.deletePlace(place.id)
+                                        if (expandedItemId == place.id) expandedItemId = null
+                                    }
+                                )
+                            }
+                        }
+                    }
+                }
+
+                item { Spacer(modifier = Modifier.height(16.dp)) }
+            }
+        }
+    }
+
+    // Route delete confirmation dialog
     if (uiState.isDeleteDialogVisible && uiState.selectedRoute != null) {
         DeleteRouteDialog(
             routeName = uiState.selectedRoute!!.name,
@@ -127,200 +205,270 @@ fun RoutesScreen(
     }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Header
+// ─────────────────────────────────────────────────────────────────────────────
+
+@Composable
+private fun SavedLocationsHeader(count: Int) {
+    Column(
+        modifier = Modifier.fillMaxWidth().semantics { heading() }.padding(bottom = 4.dp)
+    ) {
+        Text(
+            text  = "Saved Locations",
+            style = MaterialTheme.typography.headlineSmall.copy(
+                fontWeight = FontWeight.Bold, fontSize = 24.sp
+            ),
+            color    = Color(0xFF1A1A1A),
+            modifier = Modifier.semantics {
+                contentDescription = "Saved Locations, $count ${if (count == 1) "item" else "items"}"
+            }
+        )
+        Spacer(modifier = Modifier.height(4.dp))
+        Text(
+            text  = "$count saved ${if (count == 1) "location" else "locations"}",
+            style = MaterialTheme.typography.bodyMedium,
+            color = Color(0xFF666666)
+        )
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Unified card — same design for ROUTE and PLACE
+// ─────────────────────────────────────────────────────────────────────────────
+
+@Composable
+private fun SavedItemCard(
+    id: String,
+    title: String,
+    subTitle: String,
+    typeLabel: String,
+    icon: ImageVector,
+    accentColor: Color,
+    isExpanded: Boolean,
+    isRenaming: Boolean,
+    currentName: String,
+    onToggle: () -> Unit,
+    onNavigate: () -> Unit,
+    onPreview: () -> Unit,
+    onStartEdit: () -> Unit,
+    onConfirmRename: (String) -> Unit,
+    onCancelRename: () -> Unit,
+    onDelete: () -> Unit
+) {
+    var editName by remember(isRenaming, id) { mutableStateOf(currentName) }
+    val nameBlank = editName.isBlank()
+
+    Card(
+        modifier  = Modifier
+            .fillMaxWidth()
+            .semantics {
+                contentDescription = "$typeLabel: $title. " +
+                    if (isExpanded) "Expanded. Tap to collapse." else "Tap to expand actions."
+            }
+            .clickable(onClick = onToggle),
+        colors    = CardDefaults.cardColors(containerColor = Color.White),
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+        shape     = RoundedCornerShape(16.dp)
+    ) {
+        Column(modifier = Modifier.fillMaxWidth()) {
+
+            // ── Header row ─────────────────────────────────────────────────
+            Row(
+                modifier          = Modifier.fillMaxWidth().padding(16.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Surface(
+                    shape    = RoundedCornerShape(12.dp),
+                    color    = accentColor.copy(alpha = 0.10f),
+                    modifier = Modifier.size(52.dp)
+                ) {
+                    Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
+                        Icon(
+                            imageVector      = icon,
+                            contentDescription = null,
+                            tint             = accentColor,
+                            modifier         = Modifier.size(28.dp)
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.width(14.dp))
+
+                Column(modifier = Modifier.weight(1f)) {
+                    Surface(shape = RoundedCornerShape(4.dp), color = accentColor.copy(alpha = 0.13f)) {
+                        Text(
+                            text     = typeLabel,
+                            style    = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp),
+                            color    = accentColor,
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text  = title,
+                        style = MaterialTheme.typography.titleMedium.copy(
+                            fontWeight = FontWeight.Bold, fontSize = 16.sp
+                        ),
+                        color = Color(0xFF1A1A1A)
+                    )
+                    if (subTitle.isNotBlank()) {
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(
+                            text     = subTitle,
+                            style    = MaterialTheme.typography.bodySmall.copy(fontSize = 13.sp),
+                            color    = Color(0xFF666666),
+                            maxLines = 1
+                        )
+                    }
+                }
+
+                Icon(
+                    imageVector        = if (isExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                    contentDescription = if (isExpanded) "Collapse" else "Expand",
+                    tint               = Color(0xFF9E9E9E),
+                    modifier           = Modifier.size(24.dp)
+                )
+            }
+
+            // ── Expanded section ───────────────────────────────────────────
+            AnimatedVisibility(
+                visible = isExpanded,
+                enter   = expandVertically(),
+                exit    = shrinkVertically()
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(start = 16.dp, end = 16.dp, bottom = 16.dp)
+                ) {
+                    HorizontalDivider(color = Color(0xFFEEEEEE))
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    if (isRenaming) {
+                        Text(
+                            "Rename",
+                            style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),
+                            color = Color(0xFF1A1A1A)
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        OutlinedTextField(
+                            value          = editName,
+                            onValueChange  = { editName = it },
+                            label          = { Text("Name *") },
+                            singleLine     = true,
+                            isError        = nameBlank,
+                            supportingText = {
+                                if (nameBlank) Text("Name cannot be empty", color = MaterialTheme.colorScheme.error)
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Button(
+                                onClick  = { onConfirmRename(editName) },
+                                enabled  = !nameBlank,
+                                modifier = Modifier.weight(1f),
+                                colors   = ButtonDefaults.buttonColors(containerColor = accentColor)
+                            ) { Text("Save", color = Color.White) }
+                            OutlinedButton(
+                                onClick  = onCancelRename,
+                                modifier = Modifier.weight(1f)
+                            ) { Text("Cancel") }
+                        }
+                    } else {
+                        // Row 1: Navigate + Preview
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Button(
+                                onClick  = onNavigate,
+                                modifier = Modifier.weight(1f).height(44.dp),
+                                shape    = RoundedCornerShape(10.dp),
+                                colors   = ButtonDefaults.buttonColors(containerColor = accentColor)
+                            ) {
+                                Icon(Icons.Default.Navigation, null, Modifier.size(18.dp), tint = Color.White)
+                                Spacer(Modifier.width(6.dp))
+                                Text("Navigate", color = Color.White, fontSize = 14.sp)
+                            }
+                            OutlinedButton(
+                                onClick  = onPreview,
+                                modifier = Modifier.weight(1f).height(44.dp),
+                                shape    = RoundedCornerShape(10.dp)
+                            ) {
+                                Icon(Icons.Default.Visibility, null, Modifier.size(18.dp))
+                                Spacer(Modifier.width(6.dp))
+                                Text("Preview", fontSize = 14.sp)
+                            }
+                        }
+                        Spacer(modifier = Modifier.height(8.dp))
+                        // Row 2: Rename + Delete
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            OutlinedButton(
+                                onClick  = onStartEdit,
+                                modifier = Modifier.weight(1f).height(44.dp),
+                                shape    = RoundedCornerShape(10.dp)
+                            ) {
+                                Icon(Icons.Default.Edit, null, Modifier.size(18.dp))
+                                Spacer(Modifier.width(6.dp))
+                                Text("Rename", fontSize = 14.sp)
+                            }
+                            OutlinedButton(
+                                onClick  = onDelete,
+                                modifier = Modifier.weight(1f).height(44.dp),
+                                shape    = RoundedCornerShape(10.dp),
+                                colors   = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFE53935)),
+                                border   = BorderStroke(1.dp, Color(0xFFE53935))
+                            ) {
+                                Icon(Icons.Default.Delete, null, Modifier.size(18.dp), tint = Color(0xFFE53935))
+                                Spacer(Modifier.width(6.dp))
+                                Text("Delete", fontSize = 14.sp, color = Color(0xFFE53935))
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Empty state
+// ─────────────────────────────────────────────────────────────────────────────
+
+@Composable
+private fun EmptySavedLocationsState() {
+    Box(
+        modifier         = Modifier
+            .fillMaxSize()
+            .semantics { contentDescription = "No saved locations yet." },
+        contentAlignment = Alignment.Center
+    ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Icon(
+                imageVector      = Icons.Default.Bookmark,
+                contentDescription = null,
+                tint             = Color(0xFFBDBDBD),
+                modifier         = Modifier.size(72.dp)
+            )
+            Spacer(modifier = Modifier.height(16.dp))
+            Text(
+                text      = "No saved locations yet",
+                style     = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Medium),
+                color     = Color(0xFF9E9E9E),
+                textAlign = TextAlign.Center
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text      = "Save routes and places from the map\nto see them here.",
+                style     = MaterialTheme.typography.bodyMedium,
+                color     = Color(0xFFBDBDBD),
+                textAlign = TextAlign.Center
+            )
+        }
+    }
+}
+
 @Preview(showBackground = true)
 @Composable
 fun RoutesScreenPreview() {
     RoutesScreen(viewModel = previewRoutesViewModel)
 }
-
-@Composable
-private fun RoutesTab(viewModel: RoutesViewModel, uiState: RoutesUiState) {
-    if (uiState.savedRoutes.isEmpty()) {
-        EmptyRoutesState(
-            onSaveCurrentRoute = { viewModel.saveCurrentRoute() }
-        )
-    } else {
-        LazyColumn(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(horizontal = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
-            contentPadding = PaddingValues(vertical = 16.dp)
-        ) {
-            item {
-                RoutesHeader(routeCount = uiState.savedRoutes.size)
-            }
-
-            item {
-                SaveCurrentRouteButton(
-                    onClick = { viewModel.saveCurrentRoute() }
-                )
-            }
-
-            items(
-                items = uiState.savedRoutes,
-                key = { it.id }
-            ) { route ->
-                RouteItem(
-                    route = route,
-                    onClick = { viewModel.selectRoute(route) }
-                )
-            }
-
-            item {
-                Spacer(modifier = Modifier.height(16.dp))
-            }
-        }
-    }
-}
-
-@Composable
-private fun PlacesTab(viewModel: RoutesViewModel, uiState: RoutesUiState) {
-    if (uiState.savedPlaces.isEmpty()) {
-        EmptyPlacesState()
-    } else {
-        LazyColumn(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(horizontal = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
-            contentPadding = PaddingValues(vertical = 16.dp)
-        ) {
-            item {
-                Text(
-                    text = "Saved Places",
-                    style = androidx.compose.material3.MaterialTheme.typography.headlineSmall,
-                    fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
-                    modifier = Modifier.padding(bottom = 8.dp)
-                )
-                Text(
-                    text = "${uiState.savedPlaces.size} places saved",
-                    style = androidx.compose.material3.MaterialTheme.typography.bodyMedium,
-                    color = Color(0xFF666666)
-                )
-            }
-
-            items(
-                items = uiState.savedPlaces,
-                key = { it.id }
-            ) { place ->
-                PlaceItem(
-                    place = place,
-                    onDelete = { viewModel.deletePlace(place.id) }
-                )
-            }
-
-            item {
-                Spacer(modifier = Modifier.height(16.dp))
-            }
-        }
-    }
-}
-
-@Composable
-private fun MarkersTab(viewModel: RoutesViewModel, uiState: RoutesUiState) {
-    if (uiState.customMarkers.isEmpty()) {
-        EmptyMarkersState()
-    } else {
-        LazyColumn(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(horizontal = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
-            contentPadding = PaddingValues(vertical = 16.dp)
-        ) {
-            item {
-                Text(
-                    text = "Custom Markers",
-                    style = androidx.compose.material3.MaterialTheme.typography.headlineSmall,
-                    fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
-                    modifier = Modifier.padding(bottom = 8.dp)
-                )
-                Text(
-                    text = "${uiState.customMarkers.size} markers saved",
-                    style = androidx.compose.material3.MaterialTheme.typography.bodyMedium,
-                    color = Color(0xFF666666)
-                )
-            }
-
-            items(
-                items = uiState.customMarkers,
-                key = { it.id }
-            ) { marker ->
-                MarkerItem(
-                    marker = marker,
-                    onDelete = { viewModel.deleteMarker(marker.id) }
-                )
-            }
-
-            item {
-                Spacer(modifier = Modifier.height(16.dp))
-            }
-        }
-    }
-}
-
-@Composable
-private fun EmptyPlacesState() {
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(32.dp),
-        contentAlignment = androidx.compose.ui.Alignment.Center
-    ) {
-        Column(horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally) {
-            Icon(
-                imageVector = Icons.Default.Place,
-                contentDescription = null,
-                modifier = Modifier.size(64.dp),
-                tint = Color(0xFFBDBDBD)
-            )
-            Spacer(modifier = Modifier.height(16.dp))
-            Text(
-                text = "No Saved Places",
-                style = androidx.compose.material3.MaterialTheme.typography.titleLarge,
-                color = Color(0xFF666666)
-            )
-            Spacer(modifier = Modifier.height(8.dp))
-            Text(
-                text = "Save places from the map using the Place Bottom Sheet",
-                style = androidx.compose.material3.MaterialTheme.typography.bodyMedium,
-                color = Color(0xFF999999),
-                textAlign = TextAlign.Center
-            )
-        }
-    }
-}
-
-@Composable
-private fun EmptyMarkersState() {
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(32.dp),
-        contentAlignment = androidx.compose.ui.Alignment.Center
-    ) {
-        Column(horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally) {
-            Icon(
-                imageVector = Icons.Default.Place,
-                contentDescription = null,
-                modifier = Modifier.size(64.dp),
-                tint = Color(0xFFBDBDBD)
-            )
-            Spacer(modifier = Modifier.height(16.dp))
-            Text(
-                text = "No Custom Markers",
-                style = androidx.compose.material3.MaterialTheme.typography.titleLarge,
-                color = Color(0xFF666666)
-            )
-            Spacer(modifier = Modifier.height(8.dp))
-            Text(
-                text = "Add markers from your current location using the Navigation Bottom Sheet",
-                style = androidx.compose.material3.MaterialTheme.typography.bodyMedium,
-                color = Color(0xFF999999),
-                textAlign = TextAlign.Center
-            )
-        }
-    }
-}
-

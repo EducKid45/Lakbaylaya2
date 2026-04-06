@@ -6,15 +6,18 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.example.lakbaylaya.data.repository.MapRepository
 import com.example.lakbaylaya.data.repository.MapRepositoryImpl
-import com.example.lakbaylaya.ui.screens.map.models.*
-import com.example.lakbaylaya.utils.LocationProvider
+import com.example.lakbaylaya.data.repository.SavedPlaceRepositoryImpl
+import com.example.lakbaylaya.data.repository.UserProfileRepository
 import com.example.lakbaylaya.ui.screens.map.location.MapLocationController
+import com.example.lakbaylaya.ui.screens.map.models.*
+import com.example.lakbaylaya.ui.screens.route.SavedPlace
+import com.example.lakbaylaya.utils.LocationProvider
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.delay
 
 /**
  * Factory for creating MapViewModel with Application context
@@ -59,7 +62,17 @@ class MapViewModel(
 
     companion object {
         private const val DEBOUNCE_DELAY_MS = 300L
-        private const val MIN_DISTANCE_FOR_UPDATE_METERS = 50.0 // Don't update if moved less than 50m
+        private const val MIN_DISTANCE_FOR_UPDATE_METERS = 50.0
+    }
+
+    // Lazy repository for saving places to the Room database
+    private val savedPlaceRepository by lazy {
+        SavedPlaceRepositoryImpl(application.applicationContext)
+    }
+
+    // Profile repository for reading emergency contact + arrival SMS toggle
+    private val profileRepository by lazy {
+        UserProfileRepository.create(application.applicationContext)
     }
 
     // TTS manager used to speak the final recognized search phrase ("Searching for ...")
@@ -93,7 +106,8 @@ class MapViewModel(
 
     // Navigation manager handles active navigation lifecycle and GPS-driven updates
     private val navigationManager = MapNavigationManager(
-        _state
+        _state,
+        application
     )
 
     // Location provider and controller for GPS updates + reverse geocoding
@@ -116,6 +130,50 @@ class MapViewModel(
                 )
             )
         }
+
+        // Register arrival callback: when navigation completes, show toast and optionally send arrival SMS
+        navigationManager.onNavigationCompleted = { destName, destLat, destLon ->
+            viewModelScope.launch {
+                // Always show an arrival toast regardless of SMS setting
+                val arrivalMsg = "You have arrived at $destName!"
+                _state.update { it.copy(pendingArrivalToast = arrivalMsg) }
+
+                // Send SMS only if toggle is enabled and contact is set
+                val profile = profileRepository.getProfile() ?: return@launch
+                if (!profile.autoSendArrivalNotification) return@launch
+                val phone = profile.emergencyContactNumber.trim()
+                if (phone.isBlank()) return@launch
+
+                val mapsLink = "https://maps.google.com/?q=$destLat,$destLon"
+                val contactName = profile.emergencyContactName.trim()
+                val smsMessage = buildString {
+                    append("I have arrived safely at $destName.")
+                    append(" Location: $mapsLink")
+                }
+
+                try {
+                    val smsManager: android.telephony.SmsManager =
+                        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S)
+                            application.getSystemService(android.telephony.SmsManager::class.java)
+                        else
+                            @Suppress("DEPRECATION") android.telephony.SmsManager.getDefault()
+
+                    val parts = smsManager.divideMessage(smsMessage)
+                    if (parts.size == 1) {
+                        smsManager.sendTextMessage(phone, null, smsMessage, null, null)
+                    } else {
+                        smsManager.sendMultipartTextMessage(phone, null, parts, null, null)
+                    }
+                    // Update toast to include SMS confirmation
+                    val displayName = contactName.ifBlank { phone }
+                    _state.update { it.copy(pendingArrivalToast = "Arrived at $destName! Arrival SMS sent to $displayName") }
+                    android.util.Log.i("MapViewModel", "Arrival SMS sent to $phone for $destName")
+                } catch (e: Exception) {
+                    android.util.Log.e("MapViewModel", "Arrival SMS failed: ${e.message}", e)
+                    // Keep the base toast even if SMS fails
+                }
+            }
+        }
     }
 
     /**
@@ -129,6 +187,39 @@ class MapViewModel(
     fun onSearchQueryChange(query: String) {
         searchManager.onSearchQueryChange(query)
     }
+
+    /**
+     * Called by the voice-dialog bridge.
+     * Opens the search overlay immediately (user sees Searching spinner → live results),
+     * blocks keyboard via isVoiceSearchActive, then fires searchNow() — the same
+     * performSearch() pipeline the search bar uses, bypassing debounce and 3-char minimum.
+     * flow.first{} in MapScreen.LaunchedEffect catches the Results state from this single call.
+     */
+    /**
+     * Called by the voice-dialog bridge in MapScreen.
+     * Opens the overlay immediately (user sees Searching spinner → live results),
+     * blocks keyboard via isVoiceSearchActive, fires API via searchNow, and
+     * delivers results directly via [onResults] callback — no StateFlow polling race.
+     */
+    fun triggerVoiceSearch(
+        query: String,
+        onResults: (List<com.example.lakbaylaya.ui.screens.map.models.SearchResult>) -> Unit
+    ) {
+        android.util.Log.d("MapViewModel", "triggerVoiceSearch: '$query'")
+        _state.update {
+            it.copy(
+                searchQuery = query,
+                searchUiState = com.example.lakbaylaya.ui.screens.map.models.SearchUiState.Idle,
+                isSearchOverlayActive = true,
+                isVoiceSearchActive = true,
+                isVoiceListening = false
+            )
+        }
+        searchManager.searchNow(query, onResults)
+    }
+
+    /** No-op — kept for call-site compatibility. */
+    fun openSearchOverlayAfterVoice() = Unit
 
     /** Voice recognition integration - update listening flag and accept voice transcripts */
     fun startVoiceListening() {
@@ -186,7 +277,8 @@ class MapViewModel(
      * Activates the search overlay and requests focus
      */
     fun onSearchBarClick() {
-        _state.update { it.copy(isSearchOverlayActive = true) }
+        // Clear isVoiceSearchActive so keyboard and normal search work on manual interaction
+        _state.update { it.copy(isSearchOverlayActive = true, isVoiceSearchActive = false) }
     }
 
     /**
@@ -197,6 +289,7 @@ class MapViewModel(
         _state.update {
             it.copy(
                 isSearchOverlayActive = false,
+                isVoiceSearchActive = false,
                 searchUiState = SearchUiState.Idle
             )
         }
@@ -540,8 +633,51 @@ class MapViewModel(
 
     // Private action handlers
 
-    private fun savePlaceToFavorites(@Suppress("UNUSED_PARAMETER") place: SearchResult) {
-        // TODO: Implement saving to local database or shared preferences
+    private fun savePlaceToFavorites(place: SearchResult) {
+        // Guard: require a valid place name and coordinates
+        if (place.placeName.isBlank()) {
+            android.util.Log.w("MapViewModel", "savePlaceToFavorites: place name is blank, skipping")
+            return
+        }
+        viewModelScope.launch {
+            try {
+                val savedPlace = SavedPlace(
+                    id        = java.util.UUID.randomUUID().toString(),
+                    placeName = place.placeName,
+                    address   = place.address.ifBlank { place.placeName },
+                    latitude  = place.latitude,
+                    longitude = place.longitude,
+                    label     = place.category.ifBlank { "Saved" },
+                    category  = place.category,
+                    createdAt = System.currentTimeMillis()
+                )
+                val result = savedPlaceRepository.savePlace(savedPlace)
+                if (result.isSuccess) {
+                    // Signal to UI to show confirmation popup
+                    _state.update {
+                        it.copy(
+                            pendingSavePlaceResult = com.example.lakbaylaya.ui.screens.map.models.SavePlaceResult(
+                                placeName = savedPlace.placeName,
+                                address   = savedPlace.address,
+                                latitude  = savedPlace.latitude,
+                                longitude = savedPlace.longitude,
+                                label     = savedPlace.label
+                            )
+                        )
+                    }
+                    android.util.Log.d("MapViewModel", "Place saved: ${savedPlace.placeName}")
+                } else {
+                    android.util.Log.e("MapViewModel", "Failed to save place: ${result.exceptionOrNull()?.message}")
+                }
+            } catch (t: Throwable) {
+                android.util.Log.e("MapViewModel", "Exception saving place: ${t.message}", t)
+            }
+        }
+    }
+
+    /** Called by UI after showing the Save Place confirmation dialog. */
+    fun clearPendingSavePlaceResult() {
+        _state.update { it.copy(pendingSavePlaceResult = null) }
     }
 
     private fun openVoiceNotesForPlace(@Suppress("UNUSED_PARAMETER") place: SearchResult) {
@@ -956,5 +1092,81 @@ class MapViewModel(
         } else {
             android.util.Log.w("MapViewModel", "Cannot test arrival - navigation not active")
         }
+    }
+
+    /** Public API to start directions to a specific lat/lon and optional name. Used by NavGraph navigation. */
+    fun startNavigationTo(destLat: Double, destLon: Double, name: String = "", autoStart: Boolean = false) {
+        // Build a lightweight SearchResult to reuse existing showDirections code
+        val place = com.example.lakbaylaya.ui.screens.map.models.SearchResult(
+            id = java.util.UUID.randomUUID().toString(),
+            placeName = name.ifBlank { "Destination" },
+            address = name.ifBlank { "" },
+            latitude = destLat,
+            longitude = destLon,
+            distanceMeters = 0.0,
+            category = "",
+            isRecent = false,
+            iconType = com.example.lakbaylaya.ui.screens.map.models.PlaceIconType.LOCATION
+        )
+        // Use coroutine to avoid calling showDirections synchronously during composition/navigation race
+        viewModelScope.launch {
+            try {
+                // Small delay to allow ViewModel and MapScreen to settle
+                kotlinx.coroutines.delay(200)
+                showDirections(place, autoStart = autoStart)
+            } catch (t: Throwable) {
+                android.util.Log.w("MapViewModel", "startNavigationTo failed: ${t.message}")
+            }
+        }
+    }
+
+    /**
+     * Select a saved place by coordinates/name and show it on the map with the bottom sheet —
+     * WITHOUT entering Direction mode, without touching the search bar, without a search overlay.
+     * Used when the user taps a saved place in the Routes → Places tab.
+     */
+    fun selectPlaceAt(destLat: Double, destLon: Double, name: String = "") {
+        val place = SearchResult(
+            id = java.util.UUID.randomUUID().toString(),
+            placeName = name.ifBlank { "Saved Place" },
+            address = name.ifBlank { "" },
+            latitude = destLat,
+            longitude = destLon,
+            distanceMeters = 0.0,
+            category = "",
+            isRecent = false,
+            iconType = PlaceIconType.LOCATION
+        )
+        viewModelScope.launch {
+            try {
+                kotlinx.coroutines.delay(200)
+                // Update state: select the place and show bottom sheet, but do NOT change
+                // searchQuery or searchOverlayActive — the user came from Saved Places and
+                // does not need the search bar.
+                _state.update {
+                    it.copy(
+                        selectedResult = place,
+                        selectedMarker = place,
+                        uiMode = UiMode.Normal,          // ensure we are in Normal mode
+                        isSearchOverlayActive = false,   // keep search overlay closed
+                        bottomSheetState = BottomSheetState.Initial(place)
+                    )
+                }
+                // Animate camera to the saved place coordinates
+                mapManager?.animateTo(
+                    latitude = destLat,
+                    longitude = destLon,
+                    zoom = 15.0
+                )
+                android.util.Log.d("MapViewModel", "selectPlaceAt: pinned $name at $destLat,$destLon")
+            } catch (t: Throwable) {
+                android.util.Log.w("MapViewModel", "selectPlaceAt failed: ${t.message}")
+            }
+        }
+    }
+
+    /** Clear the pending arrival toast after it has been shown. */
+    fun clearPendingArrivalToast() {
+        _state.update { it.copy(pendingArrivalToast = null) }
     }
 }

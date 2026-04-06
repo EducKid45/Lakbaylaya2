@@ -1,3 +1,4 @@
+@file:Suppress("unused", "MemberVisibilityCanBePrivate")
 package com.example.lakbaylaya.bluetooth
 
 import android.app.Activity
@@ -10,27 +11,34 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
-import com.example.lakbaylaya.PermissionResultHandler
+import com.example.lakbaylaya.utils.PermissionResultHandler
 
 /**
- * BluetoothViewModel - Manages Bluetooth connection state and operations
+ * BluetoothViewModel - Manages Bluetooth state, device list, and bottom sheet visibility.
+ *
+ * Architecture:
+ * - MVVM: UI observes StateFlow; ViewModel delegates to BluetoothManagerHelper.
+ * - Exposes discovered device list for the Bluetooth bottom sheet.
+ * - Controls bottom sheet show/hide.
+ * - Handles permission flow with auto-resume.
  */
 class BluetoothViewModel(
     application: Application
 ) : AndroidViewModel(application) {
 
     private val appContext = getApplication<Application>().applicationContext
-    private val bluetoothHelper = BluetoothManagerHelper(appContext)
+    internal val bluetoothHelper = BluetoothManagerHelper(appContext)
     private val notificationManager = BluetoothNotificationManager(appContext)
 
-    // Track if we should show permission rationale dialog
+    // ── Permission rationale ────────────────────────────────────────────────
+    @Suppress("unused")
     private val _showPermissionRationale = MutableStateFlow(false)
+    @Suppress("unused")
     val showPermissionRationale: StateFlow<Boolean> = _showPermissionRationale.asStateFlow()
 
-    // Track if user has denied permissions before
     private var permissionsDeniedBefore = false
 
-    // Expose connection state to UI
+    // ── Connection state ────────────────────────────────────────────────────
     private val _isBluetoothConnected = MutableStateFlow(false)
     val isBluetoothConnected: StateFlow<Boolean> = _isBluetoothConnected.asStateFlow()
 
@@ -40,8 +48,17 @@ class BluetoothViewModel(
     private val _connectedDeviceName = MutableStateFlow<String?>(null)
     val connectedDeviceName: StateFlow<String?> = _connectedDeviceName.asStateFlow()
 
+    @Suppress("unused")
     private val _isConnecting = MutableStateFlow(false)
+    @Suppress("unused")
     val isConnecting: StateFlow<Boolean> = _isConnecting.asStateFlow()
+
+    // ── Discovered devices (for bottom sheet) ──────────────────────────────
+    val discoveredDevices: StateFlow<List<DiscoveredDevice>> = bluetoothHelper.discoveredDevices
+
+    // ── Bottom sheet visibility ─────────────────────────────────────────────
+    private val _showBluetoothSheet = MutableStateFlow(false)
+    val showBluetoothSheet: StateFlow<Boolean> = _showBluetoothSheet.asStateFlow()
 
     // Flag to resume Bluetooth flow after permission grant
     private var shouldResumeBluetoothFlowAfterPermission = false
@@ -59,39 +76,34 @@ class BluetoothViewModel(
                 )
 
                 when (state) {
-                    BluetoothState.ENABLING -> showToast("Enabling Bluetooth...")
-                    BluetoothState.SCANNING -> showToast("Searching for ESP32…")
-                    BluetoothState.CONNECTING -> showToast("Connecting to ESP32...")
+                    BluetoothState.ENABLING -> showToast("Enabling Bluetooth…")
+                    BluetoothState.SCANNING -> { /* scanning — UI shows spinner in sheet */ }
+                    BluetoothState.CONNECTING -> showToast("Connecting…")
                     BluetoothState.CONNECTED -> {
-                        showToast("Connected to ESP32")
-                        _connectedDeviceName.value?.let { deviceName ->
-                            notificationManager.showConnectedNotification(deviceName)
+                        _connectedDeviceName.value?.let { name ->
+                            showToast("Connected to $name")
+                            notificationManager.showConnectedNotification(name)
                         }
                     }
-
                     BluetoothState.DISCONNECTED -> {
                         notificationManager.dismissNotification()
-                        _connectedDeviceName.value = null
                     }
-
                     BluetoothState.ERROR -> {
                         notificationManager.dismissNotification()
-                        bluetoothHelper.errorMessage.value?.let { error ->
-                            showToast(error)
-                        }
+                        bluetoothHelper.errorMessage.value?.let { showToast(it) }
                     }
                 }
             }
         }
 
-        // Collect device name from helper
+        // Collect device name
         viewModelScope.launch {
-            bluetoothHelper.connectedDeviceName.collect { deviceName ->
-                _connectedDeviceName.value = deviceName
+            bluetoothHelper.connectedDeviceName.collect { name ->
+                _connectedDeviceName.value = name
             }
         }
 
-        // Collect error messages from helper
+        // Collect error messages
         viewModelScope.launch {
             bluetoothHelper.errorMessage.collect { error ->
                 if (error != null && _bluetoothState.value == BluetoothState.ERROR) {
@@ -111,104 +123,129 @@ class BluetoothViewModel(
         }
     }
 
-    /**
-     * Handle permission results from MainActivity
-     * Auto-resume Bluetooth flow if permissions granted
-     */
+    // ── Permission handling ─────────────────────────────────────────────────
+
     private fun handlePermissionResults(results: Map<String, Boolean>) {
         val allGranted = results.values.all { it }
 
         if (allGranted) {
-            // All permissions granted, auto-resume Bluetooth flow
-            showToast("Permissions granted, resuming Bluetooth flow...")
+            showToast("Permissions granted")
             permissionsDeniedBefore = false
             _showPermissionRationale.value = false
 
-            // Auto-resume the flow
             if (shouldResumeBluetoothFlowAfterPermission) {
                 shouldResumeBluetoothFlowAfterPermission = false
                 bluetoothHelper.enableBluetooth()
             }
         } else {
-            // Some permissions denied
             if (!permissionsDeniedBefore) {
-                // First time denied - show rationale
                 permissionsDeniedBefore = true
                 _showPermissionRationale.value = true
-                showToast("Bluetooth permissions required to connect to ESP32")
+                showToast("Bluetooth permissions required")
             } else {
-                // Already shown rationale - user still denied
-                showToast("Permissions denied. Cannot proceed with Bluetooth connection.")
+                showToast("Permissions denied. Cannot connect via Bluetooth.")
             }
         }
     }
 
-    /**
-     * Set permission launcher for the Bluetooth helper
-     */
     fun setPermissionLauncher(launcher: ActivityResultLauncher<Array<String>>) {
         bluetoothHelper.setPermissionLauncher(launcher)
     }
 
-    /**
-     * Set the current Activity
-     */
-    fun setActivity(activity: android.app.Activity?) {
+    fun setActivity(activity: Activity?) {
         bluetoothHelper.setActivity(activity)
     }
 
-    /**
-     * Dismiss permission rationale dialog
-     */
     fun dismissPermissionRationale() {
         _showPermissionRationale.value = false
     }
 
-    /**
-     * Request permissions again after rationale was shown
-     */
     fun requestPermissionsAgainAfterRationale() {
         _showPermissionRationale.value = false
         shouldResumeBluetoothFlowAfterPermission = true
         bluetoothHelper.requestBluetoothPermissions()
     }
 
-    /**
-     * Main entry point: Start Bluetooth connection flow
-     */
-    fun startBluetoothFlow() {
-        if (_isBluetoothConnected.value) {
-            disconnect()
-            return
-        }
+    // ── Bottom sheet ────────────────────────────────────────────────────────
 
+    /**
+     * Called when the Bluetooth icon in TopBar is tapped.
+     * Opens the bottom sheet and triggers a scan.
+     */
+    fun openBluetoothSheet() {
+        _showBluetoothSheet.value = true
+        startScanFlow()
+    }
+
+    /** Dismiss the bottom sheet. Does NOT disconnect the connected device. */
+    fun dismissBluetoothSheet() {
+        _showBluetoothSheet.value = false
+    }
+
+    // ── Scan ────────────────────────────────────────────────────────────────
+
+    /**
+     * Start scanning (enable BT first if needed, then discover).
+     */
+    fun startScanFlow() {
         if (!bluetoothHelper.isBluetoothAvailable()) {
             showToast("Bluetooth not supported on this device")
             return
         }
 
-        // Mark that we should resume after permissions
         shouldResumeBluetoothFlowAfterPermission = true
 
-        // Request permissions (callback will auto-resume if granted)
-        bluetoothHelper.requestBluetoothPermissions()
+        if (!bluetoothHelper.hasPermissions()) {
+            bluetoothHelper.requestBluetoothPermissions()
+            return
+        }
+
+        bluetoothHelper.enableBluetooth()
     }
 
+    /** Restart the scan (e.g., pull-to-refresh in sheet). */
+    fun rescan() {
+        if (bluetoothHelper.hasPermissions()) {
+            bluetoothHelper.startDeviceDiscovery()
+        } else {
+            startScanFlow()
+        }
+    }
+
+    // ── Connect / Disconnect ────────────────────────────────────────────────
+
     /**
-     * Disconnect from Bluetooth device
+     * Toggle: if device is connected → disconnect; if disconnected → connect.
      */
+    fun toggleDeviceConnection(address: String) {
+        val device = discoveredDevices.value.firstOrNull { it.address == address } ?: return
+        if (device.isConnected) {
+            bluetoothHelper.disconnectDevice(address)
+            notificationManager.dismissNotification()
+            showToast("Disconnected from ${device.name}")
+        } else if (!device.isConnecting) {
+            bluetoothHelper.connectToDevice(address)
+        }
+    }
+
+    // ── Legacy helpers (still used by AppViewModel toggleBluetooth) ─────────
+
+    fun startBluetoothFlow() {
+        if (_isBluetoothConnected.value) {
+            disconnect()
+            return
+        }
+        openBluetoothSheet()
+    }
+
     fun disconnect() {
         bluetoothHelper.disconnect()
         notificationManager.dismissNotification()
         _isBluetoothConnected.value = false
         _connectedDeviceName.value = null
-        showToast("Disconnected from ESP32")
+        showToast("Bluetooth disconnected")
     }
 
-    /**
-     * Request permissions and enable Bluetooth hardware. If permissions already granted,
-     * call helper.enableBluetooth() immediately; otherwise request and auto-resume.
-     */
     fun enableHardwareBluetooth() {
         if (bluetoothHelper.hasPermissions()) {
             bluetoothHelper.enableBluetooth()
@@ -218,32 +255,22 @@ class BluetoothViewModel(
         }
     }
 
-    /**
-     * Disable the Bluetooth adapter (turn off hardware).
-     */
     fun disableHardwareBluetooth() {
         bluetoothHelper.disableBluetooth()
     }
 
-    /**
-     * Show toast message to user
-     */
+    // ── Utils ───────────────────────────────────────────────────────────────
+
     private fun showToast(message: String) {
         viewModelScope.launch {
             Toast.makeText(appContext, message, Toast.LENGTH_SHORT).show()
         }
     }
 
-    /**
-     * Reset error state
-     */
     fun resetError() {
         _bluetoothState.value = BluetoothState.DISCONNECTED
     }
 
-    /**
-     * Cleanup resources
-     */
     override fun onCleared() {
         super.onCleared()
         bluetoothHelper.cleanup()

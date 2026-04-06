@@ -61,7 +61,34 @@ data class RouteStep(
     @SerialName("type")
     val type: Int? = null,
     @SerialName("location")
-    val location: List<Double> = emptyList()
+    val location: List<Double> = emptyList(),
+    /** Compass bearing at the start of this step (degrees, 0–359). */
+    @SerialName("bearing_before")
+    val bearingBefore: Double = 0.0,
+    /** Compass bearing at the end of this step (degrees, 0–359). */
+    @SerialName("bearing_after")
+    val bearingAfter: Double = 0.0,
+    /** OSM tags carried by the Geoapify step (optional). */
+    @SerialName("properties")
+    val properties: RouteStepProperties? = null
+)
+
+@Serializable
+data class RouteStepProperties(
+    @SerialName("osm_tags")
+    val osmTags: RouteStepOsmTags? = null
+)
+
+@Serializable
+data class RouteStepOsmTags(
+    @SerialName("highway")
+    val highway: String? = null,
+    @SerialName("junction")
+    val junction: String? = null,
+    @SerialName("footway")
+    val footway: String? = null,
+    @SerialName("surface")
+    val surface: String? = null
 )
 
 @Serializable

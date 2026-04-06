@@ -15,12 +15,11 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.example.lakbaylaya.ui.screens.map.models.MarkerMetadata
-import com.example.lakbaylaya.ui.screens.map.models.VoiceNoteItem
 
 /**
- * Popup card content with three sections:
+ * Popup card content with two sections:
  * 1. Fixed Header (title)
- * 2. Scrollable Marker Actions (marker editing, voice notes, landmark)
+ * 2. Scrollable Marker Actions (marker editing, landmark)
  * 3. Fixed Action Buttons (Cancel / Save)
  */
 @Composable
@@ -30,7 +29,7 @@ fun MarkerActionDialogContent(
     onDismiss: () -> Unit,
     onSaveNotes: (MarkerMetadata) -> Unit,
     onShowMapEditor: () -> Unit,
-    modifier: Modifier = Modifier // moved here
+    modifier: Modifier = Modifier
 ) {
     Surface(
         modifier = modifier
@@ -43,10 +42,6 @@ fun MarkerActionDialogContent(
         tonalElevation = 32.dp,
         shadowElevation = 32.dp
     ) {
-        // Manage local UI state for voice note editor / preview
-        var showVoiceEditor by remember { mutableStateOf(false) }
-        var editingNote by remember { mutableStateOf<VoiceNoteItem?>(null) }
-        var showPreview by remember { mutableStateOf<VoiceNoteItem?>(null) }
         // Attachment dialogs state
         var showLandmarkAttachDialog by remember { mutableStateOf(false) }
 
@@ -94,31 +89,6 @@ fun MarkerActionDialogContent(
                         markedPlaceName = metadata.landmarkName,
                         markedLatitude = metadata.latitude,
                         markedLongitude = metadata.longitude
-                    )
-                }
-
-                // Voice Notes Header
-                item {
-                    Text(
-                        text = "Voice Notes",
-                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
-                        modifier = Modifier.semantics { contentDescription = "Voice notes header" }
-                    )
-                }
-
-                item {
-                    VoiceNotesSection(
-                        voiceNotes = metadata.voiceNotes,
-                        onAddVoiceNote = { showVoiceEditor = true },
-                        onPreview = { showPreview = it },
-                        onEdit = { toEdit ->
-                            editingNote = toEdit
-                            showVoiceEditor = true
-                        },
-                        onDelete = { id ->
-                            val updatedNotes = metadata.voiceNotes.filter { it.id != id }
-                            onMetadataChange(metadata.copy(voiceNotes = updatedNotes))
-                        }
                     )
                 }
 
@@ -172,68 +142,15 @@ fun MarkerActionDialogContent(
                 }
 
                 Button(
-                    onClick = {
-                        // Only call onSaveNotes; do not dismiss here. Caller will dismiss after save completes.
-                        onSaveNotes(metadata)
-                    },
+                    onClick = { onSaveNotes(metadata) },
                     modifier = Modifier
                         .weight(1f)
                         .height(48.dp)
                         .semantics { contentDescription = "Save all marker actions and metadata" }
                 ) {
-                    Text("Save All Notes")
+                    Text("Save")
                 }
             }
-        }
-
-        // Voice note editor dialog (Add / Edit)
-        if (showVoiceEditor) {
-            VoiceNoteEditorDialog(
-                initial = editingNote,
-                onDismiss = { showVoiceEditor = false },
-                onSave = { text, audioPath ->
-                    if (editingNote == null) {
-                        val id = System.currentTimeMillis().toString()
-                        val label = "Voice Note ${metadata.voiceNotes.size + 1}"
-                        val newNote = VoiceNoteItem(
-                            id = id,
-                            label = label,
-                            text = text,
-                            audioFilePath = audioPath
-                        )
-                        onMetadataChange(metadata.copy(voiceNotes = metadata.voiceNotes + newNote))
-                    } else {
-                        val updated = metadata.voiceNotes.map {
-                            if (it.id == editingNote!!.id) it.copy(
-                                text = text,
-                                audioFilePath = audioPath
-                            ) else it
-                        }
-                        onMetadataChange(metadata.copy(voiceNotes = updated))
-                    }
-
-                    showVoiceEditor = false
-                    editingNote = null
-                }
-            )
-        }
-
-        // Voice note preview dialog
-        showPreview?.let { note ->
-            AlertDialog(
-                onDismissRequest = { showPreview = null },
-                title = { Text(note.label) },
-                text = {
-                    if (note.text.isNotBlank()) {
-                        Text(note.text)
-                    } else {
-                        Text("(No text stored for this note)")
-                    }
-                },
-                confirmButton = {
-                    TextButton(onClick = { showPreview = null }) { Text("Close") }
-                }
-            )
         }
 
         // Landmark creation dialog

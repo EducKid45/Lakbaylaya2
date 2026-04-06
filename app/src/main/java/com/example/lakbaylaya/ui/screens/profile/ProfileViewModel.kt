@@ -1,28 +1,36 @@
+@file:Suppress("unused", "MemberVisibilityCanBePrivate")
 package com.example.lakbaylaya.ui.screens.profile
 
 import android.app.Application
+import android.content.Context
+import android.location.LocationManager
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.lakbaylaya.bluetooth.BluetoothManagerHelper
+import com.example.lakbaylaya.bluetooth.BluetoothState
+import com.example.lakbaylaya.data.repository.NavigationStatsRepository
 import com.example.lakbaylaya.data.repository.UserProfileRepository
 import com.example.lakbaylaya.data.room.UserProfileEntity
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import java.time.LocalDate
 
-/**
- * User profile information
- */
+// ── Data models ──────────────────────────────────────────────────────────────
+
 data class UserProfile(
     val name: String = "",
+    val phoneNumber: String = "",
     val homeLocation: String = "",
-    val workLocation: String = ""
+    val homeLat: Double = 0.0,
+    val homeLon: Double = 0.0,
+    val workLocation: String = "",
+    val workLat: Double = 0.0,
+    val workLon: Double = 0.0
 )
 
-/**
- * Health and mobility statistics
- */
 data class HealthStats(
     val distanceWalkedTodayKm: Double = 0.0,
     val distanceWalkedWeekKm: Double = 0.0,
@@ -32,9 +40,6 @@ data class HealthStats(
     val routesCompletedWeek: Int = 0
 )
 
-/**
- * Emergency contact information
- */
 data class EmergencyContact(
     val id: String,
     val name: String,
@@ -42,51 +47,33 @@ data class EmergencyContact(
     val relationship: String = ""
 )
 
-/**
- * Emergency and safety settings
- */
 data class EmergencySettings(
     val contacts: List<EmergencyContact> = emptyList(),
     val emergencyMessage: String = "I need help. Please call me or send assistance to my location.",
     val autoArrivalNotification: Boolean = true
 )
 
-/**
- * Connected wearable device information
- */
 data class WearableDevice(
     val name: String = "",
     val isConnected: Boolean = false,
-    val batteryLevel: Int? = null // null if not available
+    val batteryLevel: Int? = null
 )
 
-/**
- * GPS status information
- */
 enum class GpsStatus(val displayName: String) {
     READY("Ready"),
     SEARCHING("Searching"),
     UNAVAILABLE("Unavailable")
 }
 
-/**
- * Device status overview (read-only display)
- */
 data class DeviceStatus(
     val wearableDevice: WearableDevice = WearableDevice(),
-    val gpsStatus: GpsStatus = GpsStatus.READY
+    val gpsStatus: GpsStatus = GpsStatus.SEARCHING
 )
 
-/**
- * Minimal profile settings (optional toggles)
- */
 data class ProfileSettings(
     val voiceFeedbackForProgress: Boolean = true
 )
 
-/**
- * App preferences
- */
 data class AppPreferences(
     val voiceSpeed: VoiceSpeed = VoiceSpeed.NORMAL,
     val vibrationStrength: VibrationStrength = VibrationStrength.MEDIUM,
@@ -114,9 +101,6 @@ enum class MapStyle(val displayName: String) {
     AUTO("Auto (Follow System)")
 }
 
-/**
- * UI state for the Profile screen
- */
 data class ProfileUiState(
     val userProfile: UserProfile = UserProfile(),
     val healthStats: HealthStats = HealthStats(),
@@ -132,232 +116,199 @@ data class ProfileUiState(
     val feedbackMessage: String? = null
 )
 
-/**
- * ViewModel for managing user profile and settings
- * Now backed by Room: loads saved profile on init and saves updates to Room so other screens observe persisted data.
- */
+// ── ViewModel ─────────────────────────────────────────────────────────────────
+
 class ProfileViewModel(application: Application) : AndroidViewModel(application) {
 
-    // repository to read/write the single user profile row
     private val repo = UserProfileRepository.create(application.applicationContext)
+    private val statsRepo = NavigationStatsRepository(application.applicationContext)
+    private val bluetoothHelper = BluetoothManagerHelper(application)
 
     private val _uiState = MutableStateFlow(ProfileUiState())
     val uiState: StateFlow<ProfileUiState> = _uiState.asStateFlow()
 
-    // Debugging helper: last observed raw profile string from DB
-    private val _lastObservedProfile = MutableStateFlow("")
-    val lastObservedProfile: StateFlow<String> = _lastObservedProfile.asStateFlow()
-
-    companion object {
-        private const val TAG = "ProfileViewModel"
-    }
+    companion object { private const val TAG = "ProfileViewModel" }
 
     init {
-        // load saved profile from Room; fall back to sample data if none
+        observeProfile()
+        observeBluetoothState()
+        observeNavigationStats()
+        refreshGpsStatus()
+    }
+
+    // ── Navigation stats from DB ───────────────────────────────────────────────
+
+    private fun observeNavigationStats() {
+        viewModelScope.launch {
+            // observe last 7 days
+            statsRepo.observeSince(7).collect { rows ->
+                val todayEpoch = LocalDate.now().toEpochDay()
+                val weekEpoch  = todayEpoch - 7
+
+                val todayRow = rows.firstOrNull { it.dateEpochDay == todayEpoch }
+                val weekRows = rows.filter { it.dateEpochDay >= weekEpoch }
+
+                _uiState.value = _uiState.value.copy(
+                    healthStats = HealthStats(
+                        distanceWalkedTodayKm = (todayRow?.distanceMeters ?: 0.0) / 1000.0,
+                        distanceWalkedWeekKm  = weekRows.sumOf { it.distanceMeters } / 1000.0,
+                        stepsToday            = todayRow?.steps ?: 0,
+                        stepsWeek             = weekRows.sumOf { it.steps },
+                        routesCompletedToday  = todayRow?.routesCompleted ?: 0,
+                        routesCompletedWeek   = weekRows.sumOf { it.routesCompleted }
+                    )
+                )
+            }
+        }
+    }
+
+    // ── Profile observation from Room ─────────────────────────────────────────
+
+    private fun observeProfile() {
         viewModelScope.launch {
             repo.observeProfile().collect { saved ->
                 if (saved != null) {
-                    // log observed values for debugging
-                    Log.d(
-                        TAG,
-                        "Observed profile from DB: name='${saved.name}', emergencyName='${saved.emergencyContactName}', emergencyNumber='${saved.emergencyContactNumber}', home='${saved.homeAddress}'"
-                    )
-
-                    // update debug state
-                    _lastObservedProfile.value =
-                        "name='${saved.name}', emergencyName='${saved.emergencyContactName}', emergencyNumber='${saved.emergencyContactNumber}', home='${saved.homeAddress}'"
-
-                    // map saved profile to UI state, including emergency contact mapped into emergencySettings
-                    val contacts =
-                        if (saved.emergencyContactName.isNotBlank() || saved.emergencyContactNumber.isNotBlank()) {
-                            listOf(
-                                EmergencyContact(
-                                    id = "primary",
-                                    name = saved.emergencyContactName,
-                                    phoneNumber = saved.emergencyContactNumber
-                                )
+                    Log.d(TAG, "Profile loaded: name='${saved.name}'")
+                    val contact = if (saved.emergencyContactName.isNotBlank() ||
+                        saved.emergencyContactNumber.isNotBlank()
+                    ) {
+                        listOf(
+                            EmergencyContact(
+                                id = "primary",
+                                name = saved.emergencyContactName,
+                                phoneNumber = saved.emergencyContactNumber
                             )
-                        } else {
-                            emptyList()
-                        }
+                        )
+                    } else emptyList()
 
                     _uiState.value = _uiState.value.copy(
                         userProfile = UserProfile(
                             name = saved.name,
+                            phoneNumber = saved.phoneNumber,
                             homeLocation = saved.homeAddress,
-                            workLocation = ""
+                            homeLat = saved.homeLat,
+                            homeLon = saved.homeLon,
+                            workLocation = saved.workAddress,
+                            workLat = saved.workLat,
+                            workLon = saved.workLon
                         ),
-                        emergencySettings = _uiState.value.emergencySettings.copy(contacts = contacts)
+                        emergencySettings = _uiState.value.emergencySettings.copy(
+                            contacts = contact,
+                            emergencyMessage = saved.emergencyMessage
+                        )
                     )
-
-                    Log.d(TAG, "UI state updated with ${contacts.size} emergency contacts")
-                } else {
-                    loadSampleData()
                 }
             }
         }
     }
 
-    private fun loadSampleData() {
-        _uiState.value = ProfileUiState(
-            userProfile = UserProfile(
-                name = "Juan Dela Cruz",
-                homeLocation = "123 Main Street, Quezon City",
-                workLocation = "University of the Philippines, Diliman"
-            ),
-            healthStats = HealthStats(
-                distanceWalkedTodayKm = 2.3,
-                distanceWalkedWeekKm = 15.7,
-                stepsToday = 3200,
-                stepsWeek = 22400,
-                routesCompletedToday = 2,
-                routesCompletedWeek = 12
-            ),
-            emergencySettings = EmergencySettings(
-                contacts = listOf(
-                    EmergencyContact(
-                        id = "1",
-                        name = "Maria Dela Cruz",
-                        phoneNumber = "+63 912 345 6789",
-                        relationship = "Mother"
-                    ),
-                    EmergencyContact(
-                        id = "2",
-                        name = "Jose Dela Cruz",
-                        phoneNumber = "+63 923 456 7890",
-                        relationship = "Father"
-                    )
-                ),
-                emergencyMessage = "I need help. Please call me or send assistance to my location.",
-                autoArrivalNotification = true
-            ),
-            wearableDevice = WearableDevice(
-                name = "LakbayLaya Band",
-                isConnected = true,
-                batteryLevel = 85
-            ),
-            deviceStatus = DeviceStatus(
-                wearableDevice = WearableDevice(
-                    name = "LakbayLaya Band",
-                    isConnected = true,
-                    batteryLevel = 85
-                ),
-                gpsStatus = GpsStatus.READY
-            ),
-            profileSettings = ProfileSettings(
-                voiceFeedbackForProgress = true
-            ),
-            appPreferences = AppPreferences(
-                voiceSpeed = VoiceSpeed.NORMAL,
-                vibrationStrength = VibrationStrength.MEDIUM,
-                mapStyle = MapStyle.AUTO
-            )
-        )
-    }
+    // ── GPS (real, checked on demand) ─────────────────────────────────────────
 
-    // Profile editing
-    fun showEditProfile() {
-        _uiState.value = _uiState.value.copy(isEditingProfile = true)
-    }
-
-    fun hideEditProfile() {
-        _uiState.value = _uiState.value.copy(isEditingProfile = false)
-    }
-
-    fun updateProfile(name: String, homeLocation: String, workLocation: String) {
-        // update UI state immediately
+    fun refreshGpsStatus() {
+        val lm = getApplication<Application>()
+            .getSystemService(Context.LOCATION_SERVICE) as LocationManager
+        val enabled = lm.isProviderEnabled(LocationManager.GPS_PROVIDER)
+        val gpsStatus = if (enabled) GpsStatus.READY else GpsStatus.UNAVAILABLE
         _uiState.value = _uiState.value.copy(
-            userProfile = UserProfile(name, homeLocation, workLocation),
-            isEditingProfile = false,
-            feedbackMessage = "Profile updated successfully"
+            deviceStatus = _uiState.value.deviceStatus.copy(gpsStatus = gpsStatus)
         )
+    }
 
-        // persist to Room (single-row)
+    // ── Bluetooth (real, from BluetoothManagerHelper) ─────────────────────────
+
+    private fun observeBluetoothState() {
         viewModelScope.launch {
-            repo.saveProfile(
-                UserProfileEntity(
-                    id = 0,
-                    name = name,
-                    emergencyContactName = _uiState.value.emergencySettings.contacts.firstOrNull()?.name
-                        ?: "",
-                    emergencyContactNumber = _uiState.value.emergencySettings.contacts.firstOrNull()?.phoneNumber
-                        ?: "",
-                    homeAddress = homeLocation
-                )
-            )
-        }
-    }
-
-    // Emergency contacts
-    fun showEditEmergencyContacts() {
-        _uiState.value = _uiState.value.copy(isEditingEmergencyContacts = true)
-    }
-
-    fun hideEditEmergencyContacts() {
-        _uiState.value = _uiState.value.copy(isEditingEmergencyContacts = false)
-    }
-
-    fun addEmergencyContact(name: String, phoneNumber: String, relationship: String) {
-        val newContact = EmergencyContact(
-            id = System.currentTimeMillis().toString(),
-            name = name,
-            phoneNumber = phoneNumber,
-            relationship = relationship
-        )
-        val updatedContacts = _uiState.value.emergencySettings.contacts + newContact
-        _uiState.value = _uiState.value.copy(
-            emergencySettings = _uiState.value.emergencySettings.copy(contacts = updatedContacts),
-            feedbackMessage = "Emergency contact added"
-        )
-
-        // persist contact to profile entity as the first contact (simple approach)
-        viewModelScope.launch {
-            val current = repo.getProfile() ?: UserProfileEntity(
-                id = 0,
-                name = _uiState.value.userProfile.name,
-                emergencyContactName = "",
-                emergencyContactNumber = "",
-                homeAddress = _uiState.value.userProfile.homeLocation
-            )
-            repo.saveProfile(
-                current.copy(
-                    emergencyContactName = name,
-                    emergencyContactNumber = phoneNumber
-                )
-            )
-        }
-    }
-
-    fun removeEmergencyContact(contactId: String) {
-        val updatedContacts =
-            _uiState.value.emergencySettings.contacts.filter { it.id != contactId }
-        _uiState.value = _uiState.value.copy(
-            emergencySettings = _uiState.value.emergencySettings.copy(contacts = updatedContacts),
-            feedbackMessage = "Emergency contact removed"
-        )
-
-        // persist removal if needed
-        viewModelScope.launch {
-            val current = repo.getProfile()
-            if (current != null && current.emergencyContactName.isNotBlank()) {
-                repo.saveProfile(
-                    current.copy(
-                        emergencyContactName = "",
-                        emergencyContactNumber = ""
+            bluetoothHelper.bluetoothState.collect { state ->
+                val isConnected = state == BluetoothState.CONNECTED
+                val name = if (isConnected)
+                    bluetoothHelper.connectedDeviceName.value ?: "ESP32" else ""
+                _uiState.value = _uiState.value.copy(
+                    deviceStatus = _uiState.value.deviceStatus.copy(
+                        wearableDevice = WearableDevice(
+                            name = name,
+                            isConnected = isConnected,
+                            batteryLevel = null  // ESP32 doesn't report battery over SPP
+                        )
                     )
                 )
             }
         }
     }
 
-    // Emergency message
-    fun showEditEmergencyMessage() {
-        _uiState.value = _uiState.value.copy(isEditingEmergencyMessage = true)
+    // ── Profile CRUD ──────────────────────────────────────────────────────────
+
+    fun showEditProfile() { _uiState.value = _uiState.value.copy(isEditingProfile = true) }
+    fun hideEditProfile() { _uiState.value = _uiState.value.copy(isEditingProfile = false) }
+
+    /** Save name, phone, home & work immediately to Room. */
+    fun updateProfile(
+        name: String,
+        phoneNumber: String,
+        homeLocation: String,
+        homeLat: Double = _uiState.value.userProfile.homeLat,
+        homeLon: Double = _uiState.value.userProfile.homeLon,
+        workLocation: String,
+        workLat: Double = _uiState.value.userProfile.workLat,
+        workLon: Double = _uiState.value.userProfile.workLon
+    ) {
+        _uiState.value = _uiState.value.copy(
+            userProfile = UserProfile(name, phoneNumber, homeLocation, homeLat, homeLon, workLocation, workLat, workLon),
+            isEditingProfile = false,
+            feedbackMessage = "Profile updated successfully"
+        )
+        persistProfile()
     }
 
-    fun hideEditEmergencyMessage() {
-        _uiState.value = _uiState.value.copy(isEditingEmergencyMessage = false)
+    /** Save home marker (lat/lon + address) from map editor. */
+    fun updateHomeLocation(address: String, lat: Double, lon: Double) {
+        _uiState.value = _uiState.value.copy(
+            userProfile = _uiState.value.userProfile.copy(
+                homeLocation = address, homeLat = lat, homeLon = lon
+            ),
+            feedbackMessage = "Home location updated"
+        )
+        persistProfile()
     }
+
+    /** Save work marker (lat/lon + address) from map editor. */
+    fun updateWorkLocation(address: String, lat: Double, lon: Double) {
+        _uiState.value = _uiState.value.copy(
+            userProfile = _uiState.value.userProfile.copy(
+                workLocation = address, workLat = lat, workLon = lon
+            ),
+            feedbackMessage = "Work location updated"
+        )
+        persistProfile()
+    }
+
+    // ── Emergency contact CRUD ────────────────────────────────────────────────
+
+    fun showEditEmergencyContacts() { _uiState.value = _uiState.value.copy(isEditingEmergencyContacts = true) }
+    fun hideEditEmergencyContacts() { _uiState.value = _uiState.value.copy(isEditingEmergencyContacts = false) }
+
+    /** Only one fixed contact is supported; replaces any existing one. */
+    fun upsertEmergencyContact(name: String, phoneNumber: String) {
+        val contact = EmergencyContact(id = "primary", name = name, phoneNumber = phoneNumber)
+        _uiState.value = _uiState.value.copy(
+            emergencySettings = _uiState.value.emergencySettings.copy(contacts = listOf(contact)),
+            isEditingEmergencyContacts = false,
+            feedbackMessage = "Emergency contact saved"
+        )
+        persistProfile()
+    }
+
+    fun removeEmergencyContact() {
+        _uiState.value = _uiState.value.copy(
+            emergencySettings = _uiState.value.emergencySettings.copy(contacts = emptyList()),
+            feedbackMessage = "Emergency contact removed"
+        )
+        persistProfile()
+    }
+
+    // ── Emergency message ─────────────────────────────────────────────────────
+
+    fun showEditEmergencyMessage() { _uiState.value = _uiState.value.copy(isEditingEmergencyMessage = true) }
+    fun hideEditEmergencyMessage() { _uiState.value = _uiState.value.copy(isEditingEmergencyMessage = false) }
 
     fun updateEmergencyMessage(message: String) {
         _uiState.value = _uiState.value.copy(
@@ -365,30 +316,56 @@ class ProfileViewModel(application: Application) : AndroidViewModel(application)
             isEditingEmergencyMessage = false,
             feedbackMessage = "Emergency message updated"
         )
+        persistProfile()
     }
 
-    // Auto-arrival notification
+    // ── Helpers ───────────────────────────────────────────────────────────────
+
+    private fun persistProfile() {
+        val ui = _uiState.value
+        val contact = ui.emergencySettings.contacts.firstOrNull()
+        viewModelScope.launch {
+            repo.saveProfile(
+                UserProfileEntity(
+                    id = 0,
+                    name = ui.userProfile.name,
+                    phoneNumber = ui.userProfile.phoneNumber,
+                    emergencyContactName = contact?.name ?: "",
+                    emergencyContactNumber = contact?.phoneNumber ?: "",
+                    emergencyMessage = ui.emergencySettings.emergencyMessage,
+                    homeAddress = ui.userProfile.homeLocation,
+                    homeLat = ui.userProfile.homeLat,
+                    homeLon = ui.userProfile.homeLon,
+                    workAddress = ui.userProfile.workLocation,
+                    workLat = ui.userProfile.workLat,
+                    workLon = ui.userProfile.workLon
+                )
+            )
+        }
+    }
+
+    // ── Misc ─────────────────────────────────────────────────────────────────
+
     fun toggleAutoArrivalNotification() {
-        val current = _uiState.value.emergencySettings.autoArrivalNotification
+        val cur = _uiState.value.emergencySettings.autoArrivalNotification
         _uiState.value = _uiState.value.copy(
-            emergencySettings = _uiState.value.emergencySettings.copy(autoArrivalNotification = !current),
-            feedbackMessage = if (!current) "Auto-arrival notification enabled" else "Auto-arrival notification disabled"
+            emergencySettings = _uiState.value.emergencySettings.copy(autoArrivalNotification = !cur)
         )
     }
 
-    // Wearable device
+    fun toggleVoiceFeedbackForProgress() {
+        val cur = _uiState.value.profileSettings.voiceFeedbackForProgress
+        _uiState.value = _uiState.value.copy(
+            profileSettings = _uiState.value.profileSettings.copy(voiceFeedbackForProgress = !cur)
+        )
+    }
+
     fun reconnectDevice() {
         _uiState.value = _uiState.value.copy(isReconnectingDevice = true)
-        // TODO: Implement actual Bluetooth reconnection logic
-        // Simulating reconnection for now
-        _uiState.value = _uiState.value.copy(
-            wearableDevice = _uiState.value.wearableDevice.copy(isConnected = true),
-            isReconnectingDevice = false,
-            feedbackMessage = "Device reconnected successfully"
-        )
+        bluetoothHelper.enableBluetooth()
+        _uiState.value = _uiState.value.copy(isReconnectingDevice = false)
     }
 
-    // App preferences
     fun setVoiceSpeed(speed: VoiceSpeed) {
         _uiState.value = _uiState.value.copy(
             appPreferences = _uiState.value.appPreferences.copy(voiceSpeed = speed),
@@ -410,66 +387,15 @@ class ProfileViewModel(application: Application) : AndroidViewModel(application)
         )
     }
 
-    fun increaseVibration() {
-        val currentStrength = _uiState.value.appPreferences.vibrationStrength
-        val nextStrength = when (currentStrength) {
-            VibrationStrength.OFF -> VibrationStrength.LIGHT
-            VibrationStrength.LIGHT -> VibrationStrength.MEDIUM
-            VibrationStrength.MEDIUM -> VibrationStrength.STRONG
-            VibrationStrength.STRONG -> VibrationStrength.MAXIMUM
-            VibrationStrength.MAXIMUM -> VibrationStrength.MAXIMUM
-        }
-        setVibrationStrength(nextStrength)
-    }
+    fun clearFeedback() { _uiState.value = _uiState.value.copy(feedbackMessage = null) }
 
-    fun decreaseVibration() {
-        val currentStrength = _uiState.value.appPreferences.vibrationStrength
-        val prevStrength = when (currentStrength) {
-            VibrationStrength.MAXIMUM -> VibrationStrength.STRONG
-            VibrationStrength.STRONG -> VibrationStrength.MEDIUM
-            VibrationStrength.MEDIUM -> VibrationStrength.LIGHT
-            VibrationStrength.LIGHT -> VibrationStrength.OFF
-            VibrationStrength.OFF -> VibrationStrength.OFF
-        }
-        setVibrationStrength(prevStrength)
-    }
-
-    fun clearFeedback() {
-        _uiState.value = _uiState.value.copy(feedbackMessage = null)
-    }
-
-    // Profile settings toggles
-    fun toggleVoiceFeedbackForProgress() {
-        val current = _uiState.value.profileSettings.voiceFeedbackForProgress
-        _uiState.value = _uiState.value.copy(
-            profileSettings = _uiState.value.profileSettings.copy(voiceFeedbackForProgress = !current),
-            feedbackMessage = if (!current) "Voice feedback for progress enabled" else "Voice feedback for progress disabled"
-        )
-    }
-
-    // Voice command processing
     fun executeVoiceCommand(command: String) {
-        val normalizedCommand = command.lowercase().trim()
-
+        val cmd = command.lowercase().trim()
         when {
-            normalizedCommand.contains("edit profile") -> showEditProfile()
-            normalizedCommand.contains("edit emergency contacts") -> showEditEmergencyContacts()
-            normalizedCommand.contains("change emergency message") -> showEditEmergencyMessage()
-            normalizedCommand.contains("reconnect device") -> reconnectDevice()
-            normalizedCommand.contains("change voice speed") -> {
-                // Cycle through voice speeds
-                val current = _uiState.value.appPreferences.voiceSpeed
-                val next = when (current) {
-                    VoiceSpeed.SLOW -> VoiceSpeed.NORMAL
-                    VoiceSpeed.NORMAL -> VoiceSpeed.FAST
-                    VoiceSpeed.FAST -> VoiceSpeed.VERY_FAST
-                    VoiceSpeed.VERY_FAST -> VoiceSpeed.SLOW
-                }
-                setVoiceSpeed(next)
-            }
-
-            normalizedCommand.contains("increase vibration") -> increaseVibration()
-            normalizedCommand.contains("decrease vibration") -> decreaseVibration()
+            cmd.contains("edit profile") -> showEditProfile()
+            cmd.contains("edit emergency") -> showEditEmergencyContacts()
+            cmd.contains("emergency message") -> showEditEmergencyMessage()
+            cmd.contains("reconnect") -> reconnectDevice()
         }
     }
 }

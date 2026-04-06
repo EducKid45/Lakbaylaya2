@@ -116,6 +116,9 @@ dependencies {
     implementation(libs.firebase.crashlytics)
     ksp("androidx.room:room-compiler:2.8.4")
 
+    // DataStore Preferences — for persisting voice/vibration/haptic settings across restarts
+    implementation("androidx.datastore:datastore-preferences:1.1.1")
+
     // Annotation library (AndroidX) - provides @Nullable, @NonNull, @SuppressLint, etc.
     implementation("androidx.annotation:annotation:1.6.0")
     testImplementation(libs.junit)

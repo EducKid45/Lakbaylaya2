@@ -145,6 +145,13 @@ data class RouteOption(
  * @property maneuver Type of maneuver (turn, continue, etc.)
  * @property latitude Latitude where this step occurs
  * @property longitude Longitude where this step occurs
+ * @property bearingBefore Compass bearing at the start of this step (0–359°).
+ * @property bearingAfter  Compass bearing at the end of this step (0–359°).
+ * @property street        Street or road name for this step (null if unknown).
+ * @property osmHighway    OSM highway tag (e.g. "primary", "crossing", "traffic_signals").
+ * @property osmJunction   OSM junction tag (e.g. "roundabout").
+ * @property osmFootway    OSM footway tag (e.g. "sidewalk").
+ * @property spokenInstruction Pre-built TTS instruction string.
  */
 data class DirectionStep(
     val instruction: String,
@@ -152,7 +159,14 @@ data class DirectionStep(
     val durationMinutes: Int,
     val maneuver: ManeuverType,
     val latitude: Double,
-    val longitude: Double
+    val longitude: Double,
+    val bearingBefore: Double = 0.0,
+    val bearingAfter: Double = 0.0,
+    val street: String? = null,
+    val osmHighway: String? = null,
+    val osmJunction: String? = null,
+    val osmFootway: String? = null,
+    val spokenInstruction: String = ""
 ) {
     /**
      * Get formatted distance for this step

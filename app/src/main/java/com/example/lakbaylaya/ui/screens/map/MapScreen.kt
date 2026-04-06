@@ -30,13 +30,20 @@ import com.example.lakbaylaya.ui.screens.map.viewmodel.MapViewModel
 import com.example.lakbaylaya.ui.screens.map.viewmodel.MapViewModelFactory
 import com.example.lakbaylaya.ui.screens.map.viewmodel.MarkerDataViewModel
 import com.example.lakbaylaya.utils.rememberLocationPermissionState
-import com.example.lakbaylaya.data.model.VoiceNote
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Switch
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.BookmarkAdded
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
@@ -50,7 +57,18 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import android.speech.RecognizerIntent
 import android.widget.Toast
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.example.lakbaylaya.ui.screens.map.navigation.voice.VoiceCommand
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
+import com.example.lakbaylaya.ui.navigationbars.nav.MapStartNavigationRequest
+import androidx.navigation.compose.currentBackStackEntryAsState
+import androidx.lifecycle.Observer
+
+import com.google.gson.Gson
+import com.example.lakbaylaya.data.repository.RoutesRepositoryRoom
+import com.example.lakbaylaya.ui.screens.route.SavedRoute
+import java.util.UUID
 
 
 /**
@@ -140,11 +158,24 @@ fun MapScreen(
      */
     onBottomNavVisibilityChange: ((Boolean) -> Unit)? = null,
     /**
-     * Callback to navigate to Voice Notes screen with location and place data
+     * Navigation start request from NavGraph
      */
-    onNavigateToVoiceNotes: ((Double, Double, String?) -> Unit)? = null
+    startNavigationRequest: MapStartNavigationRequest? = null,
+    /**
+     * NavController for navigation actions
+     */
+    navController: androidx.navigation.NavHostController,
+    /**
+     * Activity-scoped GlobalVoiceViewModel passed from MainActivity via NavGraph.
+     * Used to observe pendingVoiceSearch and deliver real search results back to the dialog engine.
+     */
+    globalVoiceViewModel: com.example.lakbaylaya.voice.GlobalVoiceViewModel? = null
 ) {
     val context = LocalContext.current
+
+    // remember gson and routes repository to avoid calling composable APIs inside lambdas
+    val gson = remember { Gson() }
+    val routesRepo = remember { RoutesRepositoryRoom(context.applicationContext) }
 
     // Create ViewModel with Application context using custom factory
     val vm: MapViewModel = viewModel(
@@ -152,6 +183,10 @@ fun MapScreen(
             context.applicationContext as android.app.Application
         )
     )
+
+    // Activity-scoped GlobalVoiceViewModel passed in from MainActivity via NavGraph.
+    // Using the passed instance guarantees this is the same ViewModel that sets pendingVoiceSearch.
+    val globalVoiceVm = globalVoiceViewModel
 
     // ViewModel for marker data persistence using AndroidViewModelFactory
     val markerDataVm: MarkerDataViewModel = viewModel(
@@ -161,6 +196,38 @@ fun MapScreen(
     )
 
     val state by vm.state.collectAsState()
+
+    // ── Voice-dialog search bridge ─────────────────────────────────────────────
+    // GlobalVoiceViewModel sets pendingVoiceSearch (StateFlow<String?>) when the
+    // navigate dialog needs a real search. MapScreen observes it here, triggers the
+    // real API via onVoiceResult, polls until results arrive, then delivers them back.
+    // Using StateFlow guarantees delivery — no SharedFlow subscription-timing races.
+    val pendingVoiceSearch by (globalVoiceVm?.pendingVoiceSearch
+        ?: kotlinx.coroutines.flow.MutableStateFlow(null)).collectAsState()
+
+    LaunchedEffect(pendingVoiceSearch) {
+        val query = pendingVoiceSearch ?: return@LaunchedEffect
+        val voiceVm = globalVoiceVm ?: return@LaunchedEffect
+        android.util.Log.d("MapScreen", "VoiceSearch triggered: query='$query'")
+
+        // Consume immediately so recompose doesn't retrigger
+        voiceVm.clearPendingVoiceSearch()
+
+        // triggerVoiceSearch opens overlay + fires API + delivers results via direct callback.
+        // No flow.first{} polling — results arrive exactly when the API returns, not before.
+        vm.triggerVoiceSearch(query) { searchResults ->
+            val items = searchResults.map { r ->
+                com.example.lakbaylaya.voice.SearchResultItem(
+                    name    = r.placeName,
+                    address = r.address,
+                    lat     = r.latitude,
+                    lon     = r.longitude
+                )
+            }
+            android.util.Log.d("MapScreen", "VoiceSearch: delivering ${items.size} results to dialog")
+            voiceVm.deliverSearchResults(items)
+        }
+    }
 
     // Create a coroutine scope for launching short delays before opening the recognizer
     val composeScope = rememberCoroutineScope()
@@ -263,6 +330,7 @@ fun MapScreen(
         )
     }
     val focusManager = LocalFocusManager.current
+    val haptic = LocalHapticFeedback.current
     // use the composeScope declared earlier (rememberCoroutineScope) to launch short coroutines
 
     // When marker editor becomes active, ensure all overlays and bottom sheets are closed
@@ -282,6 +350,8 @@ fun MapScreen(
 
     // Handle mic click: check permission and launch Google speech recognizer
     fun handleMicClick() {
+        // Haptic feedback on mic tap
+        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
         vm.startVoiceListening()
 
         // Check if RECORD_AUDIO permission is granted
@@ -318,6 +388,13 @@ fun MapScreen(
     val stepDetector = remember { AndroidStepDetector(context) }
     val locationTracker = remember { com.example.lakbaylaya.ui.screens.map.navigation.location.AndroidLocationTracker(context) }
 
+    // Helper: speak a DirectionStep using the pre-built spokenInstruction when available;
+    // falls back to the raw instruction if not present.
+    fun speakStepText(step: com.example.lakbaylaya.ui.screens.map.models.DirectionStep, priority: Boolean = true) {
+        val text = step.spokenInstruction.takeIf { it.isNotBlank() } ?: step.instruction
+        ttsEngine.speak(text, priority = priority)
+    }
+
     // Initialize NavigationVoiceManager for voice commands during navigation
     val navigationVoiceManager = remember {
         // Create the handler object first
@@ -327,7 +404,7 @@ fun MapScreen(
                     // Repeat the current instruction
                     (state.navigationState as? NavigationState.Active)?.getCurrentStep()
                         ?.let { step ->
-                            ttsEngine.speak(step.instruction, priority = true)
+                            speakStepText(step, priority = true)
                         }
                 }
 
@@ -427,6 +504,7 @@ fun MapScreen(
 
                 if (recognizedText.isNotBlank()) {
                     android.util.Log.d("MapScreen", "Voice command: '$recognizedText'")
+                    Toast.makeText(context, "🎤 Heard: $recognizedText", Toast.LENGTH_SHORT).show()
 
                     // Process voice command using NavigationVoiceManager
                     val currentNav = state.navigationState
@@ -545,6 +623,7 @@ fun MapScreen(
             ttsEngine.shutdown()
             locationTracker.stopTracking()
             navigationVoiceManager.shutdown()
+            try { vm.stopNavigation() } catch (_: Exception) { /* ignore */ }
         }
     }
 
@@ -590,7 +669,8 @@ fun MapScreen(
                 // Speak first instruction only when navigation starts (not on mute/mode changes)
                 navState.getCurrentStep()?.let { step ->
                     if (!navState.isMuted) {
-                        ttsEngine.speak(step.instruction, priority = true)
+                        // use helper to prefer spokenInstruction when available
+                        speakStepText(step, priority = true)
                     }
                 }
             }
@@ -616,7 +696,7 @@ fun MapScreen(
                 navState.getCurrentStep()?.let { step ->
                     if (!navState.isMuted) {
                         android.util.Log.d("MapScreen", "Speaking instruction for step $currentStepIndex: ${step.instruction}")
-                        ttsEngine.speak(step.instruction, priority = true)
+                        speakStepText(step, priority = true)
                     }
                 }
             }
@@ -652,47 +732,24 @@ fun MapScreen(
         }
     }
 
-    // Handle Voice Notes navigation
-    LaunchedEffect(state.pendingVoiceNotesPlace) {
-        state.pendingVoiceNotesPlace?.let { place ->
-            onNavigateToVoiceNotes?.invoke(
-                place.latitude,
-                place.longitude,
-                place.placeName
-            )
-            vm.clearPendingVoiceNotesPlace()
+    // Track Save Place confirmation dialog state
+    var showSavePlaceConfirm by remember { mutableStateOf(false) }
+    var savePlaceConfirmData by remember { mutableStateOf<com.example.lakbaylaya.ui.screens.map.models.SavePlaceResult?>(null) }
+
+    // When a place is successfully saved, capture the data and show confirmation popup
+    LaunchedEffect(state.pendingSavePlaceResult) {
+        state.pendingSavePlaceResult?.let { result ->
+            savePlaceConfirmData = result
+            showSavePlaceConfirm = true
+            vm.clearPendingSavePlaceResult()
         }
     }
 
-    // Load and display voice notes markers on map
-    var voiceNotes by remember { mutableStateOf<List<VoiceNote>>(emptyList()) }
-    var refreshVoiceNotes by remember { mutableStateOf(0) } // Trigger refresh counter
-
-
-    LaunchedEffect(isMapReady, refreshVoiceNotes) {
-        if (isMapReady) {
-
-            // Do not clear user-added temporary markers here. Only refresh voice note markers.
-
-            // Display voice note markers on map (ensure persistent)
-            voiceNotes.forEach { note ->
-                mapManager.addMarker(
-                    latitude = note.latitude,
-                    longitude = note.longitude,
-                    title = "Voice Note: ${note.id}",
-                    persistent = true
-                )
-            }
-
-            android.util.Log.d("MapScreen", "Loaded ${voiceNotes.size} voice note markers")
-        }
-    }
-
-    // Refresh voice notes when returning from Voice Notes screen
-    LaunchedEffect(state.pendingVoiceNotesPlace) {
-        if (state.pendingVoiceNotesPlace == null && voiceNotes.isNotEmpty()) {
-            // User might have created a new note, refresh the list
-            refreshVoiceNotes++
+    // Show arrival Toast when navigation completes
+    LaunchedEffect(state.pendingArrivalToast) {
+        state.pendingArrivalToast?.let { msg ->
+            Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
+            vm.clearPendingArrivalToast()
         }
     }
 
@@ -803,6 +860,118 @@ fun MapScreen(
         )
     }
 
+    // Save Place confirmation popup — shown after a place is persisted to the Route screen
+    if (showSavePlaceConfirm && savePlaceConfirmData != null) {
+        val data = savePlaceConfirmData!!
+        AlertDialog(
+            onDismissRequest = {
+                showSavePlaceConfirm = false
+                savePlaceConfirmData = null
+            },
+            icon = {
+                Icon(
+                    Icons.Default.BookmarkAdded,
+                    contentDescription = null,
+                    tint = androidx.compose.ui.graphics.Color(0xFF1976D2)
+                )
+            },
+            title = { Text("Place Saved!", fontWeight = FontWeight.Bold) },
+            text = {
+                Column(
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Text(
+                        "\"${data.placeName}\" has been saved to your places.",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                    if (data.address.isNotBlank() && data.address != data.placeName) {
+                        Text(
+                            data.address,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = androidx.compose.ui.graphics.Color(0xFF666666)
+                        )
+                    }
+                    Text(
+                        "You can view it in Routes → Places tab.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = androidx.compose.ui.graphics.Color(0xFF1976D2)
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showSavePlaceConfirm = false
+                        savePlaceConfirmData = null
+                    },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = androidx.compose.ui.graphics.Color(0xFF1976D2)
+                    )
+                ) { Text("Done") }
+            }
+        )
+    }
+
+    // Save dialog state: show dialog and pending direction data
+    var showSaveRouteDialog by remember { mutableStateOf(false) }
+    var pendingDirectionToSave by remember { mutableStateOf<com.example.lakbaylaya.ui.screens.map.models.DirectionData?>(null) }
+
+    // Save Route Dialog: shown when user taps Save in Direction sheet
+    if (showSaveRouteDialog && pendingDirectionToSave != null) {
+        val defaultName = pendingDirectionToSave?.let { dir ->
+            val dest = if (dir.destination.name.isNotBlank()) dir.destination.name else dir.destination.address
+            if (dest.isNotBlank()) dest else "Saved Route"
+        } ?: "Saved Route"
+
+        SaveRouteDialog(
+            initialName = defaultName,
+            onDismiss = {
+                showSaveRouteDialog = false
+                pendingDirectionToSave = null
+            },
+            onConfirm = { name ->
+                // Persist route using remembered routesRepo/gson/context
+                val dir = pendingDirectionToSave ?: return@SaveRouteDialog
+                val selected = dir.getSelectedRoute()
+                val newRoute = SavedRoute(
+                    id = UUID.randomUUID().toString(),
+                    name = if (name.isNotBlank()) name else defaultName,
+                    startLocation = if (dir.origin.name.isNotBlank()) dir.origin.name else dir.origin.address,
+                    endLocation = if (dir.destination.name.isNotBlank()) dir.destination.name else dir.destination.address,
+                    startLatitude = dir.origin.latitude,
+                    startLongitude = dir.origin.longitude,
+                    endLatitude = dir.destination.latitude,
+                    endLongitude = dir.destination.longitude,
+                    distanceKm = selected?.totalDistanceMeters?.div(1000.0) ?: 0.0,
+                    estimatedMinutes = selected?.totalDurationMinutes ?: 0,
+                    hasVoiceNotes = false,
+                    hasDifficultSegments = false,
+                    landmarks = dir.stops.map { it.name },
+                    voiceNoteCount = 0,
+                    difficultSegmentCount = 0,
+                    polyline = selected?.let { gson.toJson(it.polylineCoordinates) },
+                    routeSteps = selected?.steps
+                )
+
+                composeScope.launch {
+                    val res = routesRepo.saveRoute(newRoute)
+                    if (res.isSuccess) {
+                        // Set savedStateHandle so RoutesScreen opens the saved route, then navigate
+                        navController.currentBackStackEntry?.savedStateHandle?.set("open_saved_route_id", newRoute.id)
+                        navController.navigate(com.example.lakbaylaya.ui.navigationbars.nav.NavRoutes.Route.route)
+                        Toast.makeText(context, "Route saved successfully", Toast.LENGTH_SHORT).show()
+                    } else {
+                        Toast.makeText(context, "Failed to save route: ${res.exceptionOrNull()?.localizedMessage}", Toast.LENGTH_LONG).show()
+                    }
+                }
+
+                // Close dialog
+                showSaveRouteDialog = false
+                pendingDirectionToSave = null
+            }
+        )
+    }
+
     // Compute the status bar top padding once and apply a user-controlled
     // adjustment. Ensure the final padding is not negative.
     val topStatusBarPadding = (WindowInsets.statusBars
@@ -833,6 +1002,108 @@ fun MapScreen(
             } catch (e: Exception) {
                 android.util.Log.e("MapScreen", "Failed to set compass margins: ${e.message}")
             }
+        }
+    }
+
+    // If NavGraph requested a startNavigationRequest, trigger it once when MapScreen composes
+    // Ensure we only handle a startNavigationRequest once per unique request (prevents re-trigger on rotation)
+    val handledStartRequests = remember { mutableStateListOf<String>() }
+    LaunchedEffect(startNavigationRequest) {
+        startNavigationRequest?.let { req ->
+            val noCoords = req.destLat == -999.0 || req.destLon == -999.0
+            val key = if (noCoords) "search:${req.name}" else "${req.destLat},${req.destLon},${req.autoStart},${req.selectOnly}"
+            if (!handledStartRequests.contains(key)) {
+                try {
+                    when {
+                        // Voice open-search sentinel: just activate the search bar, no query yet
+                        noCoords && req.name == "__open_search__" -> {
+                            android.util.Log.d("MapScreen", "Voice open-search: activating search bar only")
+                            vm.onSearchBarClick()
+                        }
+                        // Voice search query: open overlay + fire search directly via onVoiceResult.
+                        // onVoiceResult bypasses the 3-char minimum and debounce so results appear
+                        // immediately and the Navigate button becomes active straight away.
+                        noCoords && req.name.isNotBlank() -> {
+                            android.util.Log.d("MapScreen", "Voice search query: '${req.name}'")
+                            vm.onSearchBarClick()                       // open the search overlay
+                            vm.onVoiceResult(req.name, isFinal = true)  // set query + trigger API search now
+                        }
+                        req.selectOnly -> vm.selectPlaceAt(req.destLat, req.destLon, req.name)
+                        else -> vm.startNavigationTo(req.destLat, req.destLon, req.name, req.autoStart)
+                    }
+                    handledStartRequests.add(key)
+                } catch (t: Throwable) {
+                    android.util.Log.e("MapScreen", "Failed to start navigation request: ${t.message}")
+                }
+            } else {
+                android.util.Log.d("MapScreen", "Start request already handled: $key")
+            }
+        }
+    }
+
+    // Also observe the current backStackEntry.savedStateHandle so NavGraph can update it when Map is already top.
+    val lifecycleOwner = LocalLifecycleOwner.current
+    val currentEntry by navController.currentBackStackEntryAsState()
+    val savedStateHandle = currentEntry?.savedStateHandle
+
+    DisposableEffect(savedStateHandle) {
+        // Callback invoked when any of the LiveData keys change
+        val handleChange = {
+            val latStr = savedStateHandle?.get<Any>("start_nav_dest_lat")?.toString()
+            val lonStr = savedStateHandle?.get<Any>("start_nav_dest_lon")?.toString()
+            val lat = latStr?.toDoubleOrNull() ?: -999.0
+            val lon = lonStr?.toDoubleOrNull() ?: -999.0
+            val name = savedStateHandle?.get<Any>("start_nav_name")?.toString() ?: ""
+            val auto = when (val v = savedStateHandle?.get<Any>("start_nav_auto")) {
+                is Boolean -> v
+                is String -> v.toBoolean()
+                else -> false
+            }
+            val selectOnly = when (val v = savedStateHandle?.get<Any>("start_nav_select_only")) {
+                is Boolean -> v
+                is String -> v.toBoolean()
+                else -> false
+            }
+            if (lat != -999.0 && lon != -999.0) {
+                val key = "$lat,$lon,$auto,$selectOnly"
+                if (!handledStartRequests.contains(key)) {
+                    try {
+                        if (selectOnly) {
+                            vm.selectPlaceAt(lat, lon, name)
+                        } else {
+                            vm.startNavigationTo(lat, lon, name, auto)
+                        }
+                        handledStartRequests.add(key)
+                        android.util.Log.d("MapScreen", "Handled start request from savedState: $key")
+                    } catch (t: Throwable) {
+                        android.util.Log.e("MapScreen", "Failed to start navigation from savedState: ${t.message}")
+                    }
+                } else {
+                    android.util.Log.d("MapScreen", "SavedState start request already handled: $key")
+                }
+            }
+        }
+
+        val latLd = savedStateHandle?.getLiveData<Any>("start_nav_dest_lat")
+        val lonLd = savedStateHandle?.getLiveData<Any>("start_nav_dest_lon")
+        val nameLd = savedStateHandle?.getLiveData<Any>("start_nav_name")
+        val autoLd = savedStateHandle?.getLiveData<Any>("start_nav_auto")
+        val selectOnlyLd = savedStateHandle?.getLiveData<Any>("start_nav_select_only")
+
+        val obs = Observer<Any> { handleChange() }
+
+        latLd?.observe(lifecycleOwner, obs)
+        lonLd?.observe(lifecycleOwner, obs)
+        nameLd?.observe(lifecycleOwner, obs)
+        autoLd?.observe(lifecycleOwner, obs)
+        selectOnlyLd?.observe(lifecycleOwner, obs)
+
+        onDispose {
+            latLd?.removeObserver(obs)
+            lonLd?.removeObserver(obs)
+            nameLd?.removeObserver(obs)
+            autoLd?.removeObserver(obs)
+            selectOnlyLd?.removeObserver(obs)
         }
     }
 
@@ -881,6 +1152,7 @@ fun MapScreen(
                     query = state.searchQuery,
                     isOverlayActive = state.isSearchOverlayActive,
                     isMicActive = state.isVoiceListening,
+                    isVoiceSearchActive = state.isVoiceSearchActive,
                     onQueryChange = { vm.onSearchQueryChange(it) },
                     onSearchBarClick = { vm.onSearchBarClick() },
                     onBackClick = { vm.onBackClick() },
@@ -947,7 +1219,8 @@ fun MapScreen(
                         onClick = {
                             // Repeat TTS for arrival
                             if (!navigationState.isMuted) {
-                                ttsEngine.speak(arrivalStep.instruction, priority = true)
+                                // prefer spokenInstruction if available
+                                speakStepText(arrivalStep, priority = true)
                             }
                         },
                         isArrival = true, // Mark as arrival to show special styling
@@ -970,7 +1243,7 @@ fun MapScreen(
                             onClick = {
                                 // Only repeat instruction via TTS, don't zoom map
                                 if (!navigationState.isMuted) {
-                                    ttsEngine.speak(step.instruction, priority = true)
+                                    speakStepText(step, priority = true)
                                 }
                             },
                             modifier = Modifier
@@ -998,6 +1271,7 @@ fun MapScreen(
                     },
                     isVoiceActive = isVoiceCommandActive,
                     onVoiceToggle = {
+                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                         isVoiceCommandActive = !isVoiceCommandActive
 
                         if (isVoiceCommandActive) {
@@ -1064,8 +1338,10 @@ fun MapScreen(
                         }
                     },
                     onDone = {
-                        // Finish navigation and return to normal mode
+                        // Finish navigation and return to normal mode, then navigate up
                         vm.finishNavigation()
+                        // Return to the previous screen that launched Map
+                        navController.popBackStack()
                     },
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
@@ -1120,6 +1396,7 @@ fun MapScreen(
                             query = state.searchQuery,
                             isOverlayActive = state.isSearchOverlayActive,
                             isMicActive = state.isVoiceListening,
+                            isVoiceSearchActive = state.isVoiceSearchActive,
                             onQueryChange = { vm.onSearchQueryChange(it) },
                             onSearchBarClick = { vm.onSearchBarClick() },
                             onBackClick = { vm.onBackClick() },
@@ -1156,11 +1433,19 @@ fun MapScreen(
                             onStartNavigation = {
                                 vm.startNavigation()
                             },
+                            onSpeakStep = { spokenInstruction ->
+                                ttsEngine.speak(spokenInstruction, priority = true)
+                            },
                             topInsetAdjustment = topInsetAdjustment,
                             modifier = Modifier
                                 .align(Alignment.BottomCenter)
                                 .zIndex(2f),
-                            bottomNavigationHeight = 80.dp
+                            bottomNavigationHeight = 80.dp,
+                            onSaveRoute = { directionData ->
+                                // Open the Save dialog with the current direction data
+                                pendingDirectionToSave = directionData
+                                showSaveRouteDialog = true
+                            }
                         )
                     }
                 } else {
@@ -1300,7 +1585,7 @@ fun MapScreen(
                                     "Added green persistent marker at $lat,$lng"
                                 )
 
-                                // Persist to database
+                                // Persist landmark to database
                                 markerDataVm.saveLandmark(
                                     latitude = lat,
                                     longitude = lng,
@@ -1308,20 +1593,6 @@ fun MapScreen(
                                     routeDifficulty = metadata.routeDifficulty,
                                     description = metadata.landmarkDescription
                                 )
-
-                                // Save voice notes to database
-                                metadata.voiceNotes.forEach { voiceNote ->
-                                    voiceNote.audioFilePath?.let { audioPath ->
-                                        markerDataVm.saveVoiceNote(
-                                            latitude = lat,
-                                            longitude = lng,
-                                            locationName = metadata.landmarkName,
-                                            audioFilePath = audioPath,
-                                            transcription = voiceNote.text,
-                                            durationSeconds = 0 // TODO: calculate duration
-                                        )
-                                    }
-                                }
 
                                 android.util.Log.d("MapScreen", "Persisted marker data to database")
                             }
@@ -1545,6 +1816,50 @@ fun LocationPermissionDialog(
         dismissButton = {
             TextButton(onClick = onDismiss) {
                 Text("Not Now")
+            }
+        }
+    )
+}
+
+// SaveRouteDialog: only asks for a route name
+@Composable
+private fun SaveRouteDialog(
+    initialName: String = "Saved Route",
+    onDismiss: () -> Unit,
+    onConfirm: (name: String) -> Unit
+) {
+    var name by remember { mutableStateOf(initialName) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Save Route", style = MaterialTheme.typography.titleLarge) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(
+                    text = "Enter a name for this route.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it },
+                    label = { Text("Route name") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = { onConfirm(name.trim()) },
+                enabled = name.isNotBlank()
+            ) {
+                Text("Save")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel")
             }
         }
     )

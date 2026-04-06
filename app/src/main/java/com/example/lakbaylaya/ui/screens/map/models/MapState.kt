@@ -44,7 +44,28 @@ data class MapState(
     val isVoiceListening: Boolean = false,
     val isMarkerEditing: Boolean = false,
     val markerEditingResult: SearchResult? = null,
-    val editingStopIndex: Int? = null
+    val editingStopIndex: Int? = null,
+    /** Non-null when Save Place succeeded — UI shows confirmation popup then clears this. */
+    val pendingSavePlaceResult: SavePlaceResult? = null,
+    /**
+     * True while voice-dialog search is active — suppresses FloatingSearchBar keyboard focus
+     * so the keyboard doesn't open and trigger the debounce race with searchNow().
+     */
+    val isVoiceSearchActive: Boolean = false,
+    /** Non-null when an arrival SMS was sent (or failed). MapScreen shows a Toast then clears this. */
+    val pendingArrivalToast: String? = null
+)
+
+/**
+ * Carries the result of a successful Save Place operation so the UI can
+ * show a confirmation dialog/snackbar and surface the data in Route screen.
+ */
+data class SavePlaceResult(
+    val placeName: String,
+    val address: String,
+    val latitude: Double,
+    val longitude: Double,
+    val label: String
 )
 
 /**

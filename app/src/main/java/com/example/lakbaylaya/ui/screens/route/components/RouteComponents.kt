@@ -1,5 +1,6 @@
 package com.example.lakbaylaya.ui.screens.route.components
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -21,24 +22,30 @@ import androidx.compose.material.icons.filled.AccessTime
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Navigation
 import androidx.compose.material.icons.filled.Place
-import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Route
 import androidx.compose.material.icons.filled.Save
-import androidx.compose.material.icons.filled.Vibration
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -77,38 +84,6 @@ fun RoutesHeader(routeCount: Int) {
             modifier = Modifier.semantics {
                 contentDescription = "$routeCount familiar routes saved"
             }
-        )
-    }
-}
-
-@Composable
-fun SaveCurrentRouteButton(onClick: () -> Unit) {
-    androidx.compose.material3.OutlinedButton(
-        onClick = onClick,
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(56.dp)
-            .semantics {
-                contentDescription =
-                    "Save current route. Tap to save your current navigation route."
-            },
-        shape = RoundedCornerShape(12.dp),
-        colors = androidx.compose.material3.ButtonDefaults.outlinedButtonColors(
-            contentColor = Color(0xFF1976D2)
-        )
-    ) {
-        Icon(
-            imageVector = Icons.Default.Save,
-            contentDescription = null,
-            modifier = Modifier.size(24.dp)
-        )
-        Spacer(modifier = Modifier.width(8.dp))
-        Text(
-            text = "Save Current Route",
-            style = MaterialTheme.typography.titleMedium.copy(
-                fontWeight = FontWeight.SemiBold,
-                fontSize = 16.sp
-            )
         )
     }
 }
@@ -155,13 +130,6 @@ fun RouteItem(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Icon(
-                    imageVector = Icons.Default.Route,
-                    contentDescription = null,
-                    tint = Color(0xFF1976D2),
-                    modifier = Modifier.size(24.dp)
-                )
-                Spacer(modifier = Modifier.width(12.dp))
                 Text(
                     text = route.name,
                     style = MaterialTheme.typography.titleMedium.copy(
@@ -232,27 +200,15 @@ fun RouteItem(
                 )
             }
 
-            if (route.hasVoiceNotes || route.hasDifficultSegments) {
+            if (route.hasDifficultSegments) {
                 Spacer(modifier = Modifier.height(12.dp))
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    if (route.hasVoiceNotes) {
-                        RouteIndicatorChip(
-                            icon = Icons.Default.Mic,
-                            text = "Voice notes",
-                            backgroundColor = Color(0xFFE3F2FD),
-                            contentColor = Color(0xFF1976D2)
-                        )
-                    }
-                    if (route.hasDifficultSegments) {
-                        RouteIndicatorChip(
-                            icon = Icons.Default.Warning,
-                            text = "Difficult section",
-                            backgroundColor = Color(0xFFFFF3E0),
-                            contentColor = Color(0xFFE65100)
-                        )
-                    }
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    RouteIndicatorChip(
+                        icon = Icons.Default.Warning,
+                        text = "Difficult section",
+                        backgroundColor = Color(0xFFFFF3E0),
+                        contentColor = Color(0xFFE65100)
+                    )
                 }
             }
         }
@@ -300,9 +256,7 @@ fun RouteDetailPanel(
     onPreview: () -> Unit,
     onStartNavigation: () -> Unit,
     onRename: () -> Unit,
-    onDelete: () -> Unit,
-    onPlayVoiceNote: () -> Unit,
-    onPlayDifficultyWarning: () -> Unit
+    onDelete: () -> Unit
 ) {
     Column(
         modifier = Modifier
@@ -399,8 +353,7 @@ fun RouteDetailPanel(
                     fontWeight = FontWeight.SemiBold,
                     fontSize = 16.sp
                 ),
-                color = Color(0xFF1A1A1A),
-                modifier = Modifier.semantics { /* heading handled by caller */ }
+                color = Color(0xFF1A1A1A)
             )
             Spacer(modifier = Modifier.height(8.dp))
             route.landmarks.forEach { landmark ->
@@ -420,51 +373,9 @@ fun RouteDetailPanel(
                     Text(
                         text = landmark,
                         style = MaterialTheme.typography.bodyMedium,
-                        color = Color(0xFF424242),
-                        modifier = Modifier.semantics {
-                            contentDescription = "Landmark: $landmark"
-                        }
+                        color = Color(0xFF424242)
                     )
                 }
-            }
-        }
-
-        // Voice notes and difficulty sections
-        if (route.hasVoiceNotes || route.hasDifficultSegments) {
-            Spacer(modifier = Modifier.height(20.dp))
-            HorizontalDivider(color = Color(0xFFE0E0E0))
-            Spacer(modifier = Modifier.height(16.dp))
-
-            Text(
-                text = "Route Memory",
-                style = MaterialTheme.typography.titleMedium.copy(
-                    fontWeight = FontWeight.SemiBold,
-                    fontSize = 16.sp
-                ),
-                color = Color(0xFF1A1A1A),
-                modifier = Modifier.semantics { /* heading handled by caller */ }
-            )
-            Spacer(modifier = Modifier.height(12.dp))
-
-            if (route.hasVoiceNotes) {
-                MemoryInfoRow(
-                    icon = Icons.Default.Mic,
-                    iconColor = Color(0xFF1976D2),
-                    text = "${route.voiceNoteCount} GPS-tagged voice notes",
-                    actionText = "Play sample",
-                    onAction = onPlayVoiceNote
-                )
-                Spacer(modifier = Modifier.height(12.dp))
-            }
-
-            if (route.hasDifficultSegments) {
-                MemoryInfoRow(
-                    icon = Icons.Default.Vibration,
-                    iconColor = Color(0xFFE65100),
-                    text = "${route.difficultSegmentCount} difficult areas marked",
-                    actionText = "Hear warning",
-                    onAction = onPlayDifficultyWarning
-                )
             }
         }
 
@@ -613,161 +524,228 @@ fun InfoCard(
     }
 }
 
-@Composable
-fun MemoryInfoRow(
-    icon: ImageVector,
-    iconColor: Color,
-    text: String,
-    actionText: String,
-    onAction: () -> Unit
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(12.dp))
-            .background(Color(0xFFF5F5F5))
-            .padding(12.dp)
-            .semantics(mergeDescendants = true) {
-                contentDescription = "$text. Tap $actionText button to hear audio."
-            },
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = null,
-            tint = iconColor,
-            modifier = Modifier.size(24.dp)
-        )
-        Spacer(modifier = Modifier.width(12.dp))
-        Text(
-            text = text,
-            style = MaterialTheme.typography.bodyMedium,
-            color = Color(0xFF424242),
-            modifier = Modifier.weight(1f)
-        )
-        androidx.compose.material3.TextButton(
-            onClick = onAction,
-            modifier = Modifier.semantics {
-                contentDescription = actionText
-            }
-        ) {
-            Icon(
-                imageVector = Icons.Default.PlayArrow,
-                contentDescription = null,
-                modifier = Modifier.size(18.dp)
-            )
-            Spacer(modifier = Modifier.width(4.dp))
-            Text(actionText, fontSize = 14.sp)
-        }
-    }
-}
 
 /**
- * Place item card showing saved place information
+ * Place item card — expand/collapse on tap, Preview label, Navigate button, Edit/Rename, Delete.
+ *
+ * Logic:
+ * - Collapsed: shows name + label badge. Tap anywhere to expand.
+ * - Expanded:  shows address, coords, action buttons (Navigate, Edit, Delete).
+ * - Editing:   name + label text fields inline with Confirm / Cancel.
+ *
+ * All actions call the parent ViewModel via the provided lambdas — nothing is fake.
  */
 @Composable
 fun PlaceItem(
     place: com.example.lakbaylaya.ui.screens.route.SavedPlace,
-    onDelete: () -> Unit
+    isExpanded: Boolean       = false,
+    isRenaming: Boolean       = false,
+    onToggle: () -> Unit      = {},
+    onNavigate: () -> Unit    = {},
+    onStartEdit: () -> Unit   = {},
+    onConfirmRename: (name: String, label: String) -> Unit = { _, _ -> },
+    onCancelRename: () -> Unit = {},
+    onDelete: () -> Unit      = {}
 ) {
+    // Local state for rename fields — initialised from current values
+    var editName  by remember(isRenaming, place.id) { mutableStateOf(place.placeName) }
+    var editLabel by remember(isRenaming, place.id) { mutableStateOf(place.label) }
+    val nameBlank = editName.isBlank()
+
     Card(
         modifier = Modifier
             .fillMaxWidth()
             .semantics {
-                contentDescription = "Saved place: ${place.placeName}, labeled as ${place.label}"
-            },
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = Color.White
-        ),
-        elevation = CardDefaults.cardElevation(
-            defaultElevation = 2.dp
-        )
+                contentDescription = "Saved place: ${place.placeName}, label ${place.label}. " +
+                        if (isExpanded) "Expanded. Tap to collapse." else "Tap to expand details."
+            }
+            .clickable(onClick = onToggle),
+        shape     = RoundedCornerShape(16.dp),
+        colors    = CardDefaults.cardColors(containerColor = Color.White),
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
     ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            // Place icon with label badge
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                modifier = Modifier.width(60.dp)
+        Column(Modifier.fillMaxWidth()) {
+
+            // ── Always-visible header ─────────────────────────────────────────
+            Row(
+                modifier            = Modifier.fillMaxWidth().padding(16.dp),
+                verticalAlignment   = Alignment.CenterVertically
             ) {
-                Surface(
-                    shape = RoundedCornerShape(12.dp),
-                    color = Color(0xFF1976D2).copy(alpha = 0.1f),
-                    modifier = Modifier.size(48.dp)
+                // Icon + label badge
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    modifier            = Modifier.width(60.dp)
                 ) {
-                    Box(
-                        contentAlignment = Alignment.Center,
-                        modifier = Modifier.fillMaxSize()
+                    Surface(
+                        shape    = RoundedCornerShape(12.dp),
+                        color    = Color(0xFF1976D2).copy(alpha = 0.1f),
+                        modifier = Modifier.size(48.dp)
                     ) {
-                        Icon(
-                            imageVector = Icons.Default.Place,
-                            contentDescription = null,
-                            tint = Color(0xFF1976D2),
-                            modifier = Modifier.size(28.dp)
+                        Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
+                            Icon(Icons.Default.Place, null, tint = Color(0xFF1976D2), modifier = Modifier.size(28.dp))
+                        }
+                    }
+                    Spacer(Modifier.height(4.dp))
+                    Surface(shape = RoundedCornerShape(4.dp), color = Color(0xFF1976D2)) {
+                        Text(
+                            text     = place.label.ifBlank { "Saved" },
+                            style    = MaterialTheme.typography.labelSmall,
+                            color    = Color.White,
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                            maxLines = 1
                         )
                     }
                 }
-                Spacer(modifier = Modifier.height(4.dp))
-                Surface(
-                    shape = RoundedCornerShape(4.dp),
-                    color = Color(0xFF1976D2)
-                ) {
+
+                Spacer(Modifier.width(16.dp))
+
+                // Name + address preview
+                Column(Modifier.weight(1f)) {
                     Text(
-                        text = place.label,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = Color.White,
-                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
-                        maxLines = 1
+                        text       = place.placeName,
+                        style      = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        color      = Color(0xFF1A1A1A)
                     )
+                    if (place.address.isNotBlank()) {
+                        Spacer(Modifier.height(2.dp))
+                        Text(
+                            text     = place.address,
+                            style    = MaterialTheme.typography.bodySmall,
+                            color    = Color(0xFF888888),
+                            maxLines = 1
+                        )
+                    }
                 }
-            }
 
-            Spacer(modifier = Modifier.width(16.dp))
-
-            // Place details
-            Column(
-                modifier = Modifier.weight(1f)
-            ) {
-                Text(
-                    text = place.placeName,
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold,
-                    color = Color(0xFF1A1A1A)
-                )
-                Spacer(modifier = Modifier.height(4.dp))
-                Text(
-                    text = place.address,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = Color(0xFF666666),
-                    maxLines = 2
-                )
-                if (place.category.isNotEmpty()) {
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                        text = place.category,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = Color(0xFF999999)
-                    )
-                }
-            }
-
-            // Delete button
-            IconButton(
-                onClick = onDelete,
-                modifier = Modifier.semantics {
-                    contentDescription = "Delete place ${place.placeName}"
-                }
-            ) {
+                // Expand/collapse chevron
                 Icon(
-                    imageVector = Icons.Default.Delete,
-                    contentDescription = null,
-                    tint = Color(0xFFE53935)
+                    imageVector        = if (isExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                    contentDescription = if (isExpanded) "Collapse" else "Expand",
+                    tint               = Color(0xFF9E9E9E),
+                    modifier           = Modifier.size(24.dp)
                 )
+            }
+
+            // ── Expanded details ──────────────────────────────────────────────
+            androidx.compose.animation.AnimatedVisibility(
+                visible = isExpanded,
+                enter   = androidx.compose.animation.expandVertically(),
+                exit    = androidx.compose.animation.shrinkVertically()
+            ) {
+                Column(
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(start = 16.dp, end = 16.dp, bottom = 16.dp)
+                ) {
+                    HorizontalDivider(color = Color(0xFFEEEEEE))
+                    Spacer(Modifier.height(12.dp))
+
+                    if (isRenaming) {
+                        // ── Rename form ───────────────────────────────────────
+                        Text(
+                            "Edit Place",
+                            style      = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.SemiBold,
+                            color      = Color(0xFF1A1A1A)
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        OutlinedTextField(
+                            value         = editName,
+                            onValueChange = { editName = it },
+                            label         = { Text("Place Name *") },
+                            singleLine    = true,
+                            isError       = nameBlank,
+                            supportingText = {
+                                if (nameBlank) Text("Name cannot be empty",
+                                    color = MaterialTheme.colorScheme.error)
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        OutlinedTextField(
+                            value         = editLabel,
+                            onValueChange = { editLabel = it },
+                            label         = { Text("Label (e.g. Home, School, Market)") },
+                            singleLine    = true,
+                            modifier      = Modifier.fillMaxWidth()
+                        )
+                        Spacer(Modifier.height(12.dp))
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Button(
+                                onClick  = { onConfirmRename(editName, editLabel) },
+                                enabled  = !nameBlank,
+                                modifier = Modifier.weight(1f),
+                                colors   = ButtonDefaults.buttonColors(containerColor = Color(0xFF1976D2))
+                            ) { Text("Save", color = Color.White) }
+                            OutlinedButton(
+                                onClick  = onCancelRename,
+                                modifier = Modifier.weight(1f)
+                            ) { Text("Cancel") }
+                        }
+                    } else {
+                        // ── Details + action buttons ──────────────────────────
+                        if (place.address.isNotBlank()) {
+                            Text(
+                                text  = place.address,
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = Color(0xFF424242)
+                            )
+                            Spacer(Modifier.height(4.dp))
+                        }
+                        if (place.category.isNotBlank()) {
+                            Text(
+                                text  = "Category: ${place.category}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = Color(0xFF888888)
+                            )
+                            Spacer(Modifier.height(4.dp))
+                        }
+                        Text(
+                            text  = "Lat %.5f  Lon %.5f".format(place.latitude, place.longitude),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Color(0xFF999999)
+                        )
+                        Spacer(Modifier.height(14.dp))
+
+                        // Navigate + Edit row
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Button(
+                                onClick  = onNavigate,
+                                modifier = Modifier.weight(1f).height(44.dp),
+                                shape    = RoundedCornerShape(10.dp),
+                                colors   = ButtonDefaults.buttonColors(containerColor = Color(0xFF1976D2))
+                            ) {
+                                Icon(Icons.Default.Navigation, null, Modifier.size(18.dp), tint = Color.White)
+                                Spacer(Modifier.width(6.dp))
+                                Text("Navigate", color = Color.White, fontSize = 14.sp)
+                            }
+                            OutlinedButton(
+                                onClick  = onStartEdit,
+                                modifier = Modifier.weight(1f).height(44.dp),
+                                shape    = RoundedCornerShape(10.dp)
+                            ) {
+                                Icon(Icons.Default.Edit, null, Modifier.size(18.dp))
+                                Spacer(Modifier.width(6.dp))
+                                Text("Edit", fontSize = 14.sp)
+                            }
+                        }
+                        Spacer(Modifier.height(8.dp))
+
+                        // Delete button (full width, destructive)
+                        OutlinedButton(
+                            onClick  = onDelete,
+                            modifier = Modifier.fillMaxWidth().height(40.dp),
+                            shape    = RoundedCornerShape(10.dp),
+                            colors   = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFE53935)),
+                            border   = BorderStroke(1.dp, Color(0xFFE53935))
+                        ) {
+                            Icon(Icons.Default.Delete, null, Modifier.size(16.dp), tint = Color(0xFFE53935))
+                            Spacer(Modifier.width(6.dp))
+                            Text("Delete", fontSize = 13.sp, color = Color(0xFFE53935))
+                        }
+                    }
+                }
             }
         }
     }

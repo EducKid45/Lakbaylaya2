@@ -2,913 +2,396 @@ package com.example.lakbaylaya.ui.screens.profile
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.DirectionsWalk
-import androidx.compose.material.icons.filled.ArrowDropDown
-import androidx.compose.material.icons.filled.ArrowDropUp
-import androidx.compose.material.icons.filled.BatteryFull
-import androidx.compose.material.icons.filled.BluetoothConnected
-import androidx.compose.material.icons.filled.BluetoothDisabled
-import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.ContactPhone
-import androidx.compose.material.icons.filled.GpsFixed
-import androidx.compose.material.icons.filled.GpsNotFixed
-import androidx.compose.material.icons.filled.Home
-import androidx.compose.material.icons.filled.Notifications
-import androidx.compose.material.icons.filled.Person
-import androidx.compose.material.icons.filled.RecordVoiceOver
-import androidx.compose.material.icons.filled.Watch
-import androidx.compose.material.icons.filled.Work
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.Icon
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Switch
-import androidx.compose.material3.SwitchDefaults
-import androidx.compose.material3.Text
-import androidx.compose.material3.HorizontalDivider
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.remember
+import androidx.compose.material.icons.filled.*
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.zIndex
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
-import androidx.compose.foundation.layout.offset
 
+/**
+ * Profile Screen — rules enforced:
+ *
+ *  • Name + Phone → tap opens ProfileEditorScreen (name/phone only)
+ *  • Home / Work  → tap opens LocationMarkerEditorDialog (map-pin setter)
+ *  • Emergency contact / message are READ-ONLY here — editing redirected to Settings
+ *  • No emergency editing dialogs on this screen
+ *  • Device status: GPS + ESP32 BT, NO battery icon
+ *  • All displayed values have null-safe defaults
+ *  • "Profile" title in real TopAppBar; edit icon also in TopAppBar
+ */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ProfileScreen(
     viewModel: ProfileViewModel = viewModel()
 ) {
-    val uiState by viewModel.uiState.collectAsState()
+    val uiState          by viewModel.uiState.collectAsState()
+    val snackbarHostState = remember { SnackbarHostState() }
 
-    // Parent `LakbayLayaApp` provides the TopBar. Treat this as scaffold content.
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(Color(0xFFF8F9FA))
-    ) {
-        LazyColumn(
-            modifier = Modifier
+    LaunchedEffect(uiState.feedbackMessage) {
+        uiState.feedbackMessage?.let {
+            snackbarHostState.showSnackbar(it)
+            viewModel.clearFeedback()
+        }
+    }
+    LaunchedEffect(Unit) { viewModel.refreshGpsStatus() }
+
+    Scaffold(
+        snackbarHost = { SnackbarHost(snackbarHostState) }
+    ) { pad ->
+        // Omit the scaffold's top padding so content sits at the very top.
+        val layoutDir = androidx.compose.ui.platform.LocalLayoutDirection.current
+        val startPad = pad.calculateStartPadding(layoutDir)
+        val endPad = pad.calculateEndPadding(layoutDir)
+        val bottomPad = pad.calculateBottomPadding()
+
+        Box(
+            Modifier
                 .fillMaxSize()
-                .padding(horizontal = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(20.dp),
-            contentPadding = PaddingValues(vertical = 16.dp)
+                .background(Color(0xFFF8F9FA))
+                .padding(start = startPad, end = endPad, bottom = bottomPad)
         ) {
-            // 1. User Information Section
-            item {
-                UserInformationSection(profile = uiState.userProfile)
-            }
-
-            // 2. Health & Mobility Progress
-            item {
-                HealthProgressSection(stats = uiState.healthStats)
-            }
-
-            // 3. Emergency Overview (Read-Only)
-            item {
-                EmergencyOverviewSection(settings = uiState.emergencySettings)
-            }
-
-            // 4. Device Status Overview (Read-Only)
-            item {
-                DeviceStatusOverviewSection(deviceStatus = uiState.deviceStatus)
-            }
-
-            // 5. Minimal Profile Settings
-            item {
-                ProfileSettingsSection(
-                    settings = uiState.profileSettings,
-                    onToggleVoiceFeedback = { viewModel.toggleVoiceFeedbackForProgress() }
-                )
-            }
-
-            // Bottom spacing
-            item {
-                Spacer(modifier = Modifier.height(24.dp))
+            LazyColumn(
+                Modifier
+                    .fillMaxSize()
+                    .padding(horizontal = 16.dp),
+                verticalArrangement = Arrangement.spacedBy(20.dp),
+                contentPadding = PaddingValues(vertical = 16.dp)
+            ) {
+                item {
+                    UserInfoSection(
+                        profile = uiState.userProfile,
+                        displayName = uiState.name
+                    )
+                }
+                item { HealthProgressSection(stats = uiState.healthStats) }
+                item { EmergencyReadOnlySection(settings = uiState.emergencySettings) }
+                item { DeviceStatusSection(deviceStatus = uiState.deviceStatus) }
+                item {
+                    ProfileSettingsSection(
+                        settings              = uiState.profileSettings,
+                        onToggleVoiceFeedback = { viewModel.toggleVoiceFeedbackForProgress() }
+                    )
+                }
+                item { Spacer(Modifier.height(24.dp)) }
             }
         }
     }
 }
 
-// ============================================
-// Section 1: User Information (Display Only)
-// ============================================
+// ── Section 1: User Info ──────────────────────────────────────────────────────
 
 @Composable
-private fun UserInformationSection(profile: UserProfile) {
-    SectionCard(
+private fun UserInfoSection(
+    profile: UserProfile,
+    displayName: String?
+) {
+    // No actionIcon here — edit is in the TopAppBar per design rules
+    ProfileSectionCard(
         title = "User Information",
-        titleDescription = "User Information section. Your personal details and saved locations.",
         icon = Icons.Default.Person,
         iconColor = Color(0xFF1976D2)
     ) {
-        // User name
-        if (profile.name.isNotEmpty()) {
-            InfoRow(
-                icon = Icons.Default.Person,
-                iconColor = Color(0xFF1976D2),
-                label = "Name",
-                value = profile.name,
-                accessibilityDescription = "Your name is ${profile.name}"
-            )
-            Spacer(modifier = Modifier.height(16.dp))
+        // Name (display only; edit via top-bar edit button)
+        InfoRow(
+            icon = Icons.Default.Person, iconColor = Color(0xFF1976D2),
+            label = "Name",
+            value = displayName.orEmpty().ifEmpty { "Tap to set name" },
+            valueColor = if (displayName.isNullOrEmpty()) Color(0xFFAAAAAA) else Color(0xFF1A1A1A)
+        )
+        Spacer(Modifier.height(10.dp))
+        // Home — tap opens MAP PIN setter
+        InfoRow(
+            icon = Icons.Default.Home, iconColor = Color(0xFF4CAF50),
+            label = "Home Location",
+            value = profile.homeLocation.ifEmpty { "Not setted" },
+            valueColor = if (profile.homeLocation.isEmpty()) Color(0xFFAAAAAA) else Color(0xFF1A1A1A),
+        )
+        Spacer(Modifier.height(10.dp))
+        // Work — tap opens MAP PIN setter
+        InfoRow(
+            icon = Icons.Default.Work, iconColor = Color(0xFFFF9800),
+            label = "Work / School",
+            value = profile.workLocation.ifEmpty { "Not setted" },
+            valueColor = if (profile.workLocation.isEmpty()) Color(0xFFAAAAAA) else Color(0xFF1A1A1A),
+        )
+    }
+}
+
+// ── Local helpers to safely read from uiState (null-safe) ────────────────────
+
+private val ProfileUiState.name  get() = userProfile.name.takeIf { it.isNotBlank() }
+
+// ── Section 2: Health Stats ───────────────────────────────────────────────────
+
+@Composable
+private fun HealthProgressSection(stats: HealthStats) {
+    ProfileSectionCard(
+        title = "Health & Mobility",
+        icon = Icons.AutoMirrored.Filled.DirectionsWalk,
+        iconColor = Color(0xFF4CAF50)
+    ) {
+        Text("Today",
+            style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),
+            modifier = Modifier.padding(bottom = 8.dp).semantics { heading() })
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            StatChip("%.1f".format(stats.distanceWalkedTodayKm), "km",    "Distance today",  Modifier.weight(1f))
+            StatChip("${stats.stepsToday}",                       "steps", "Steps today",     Modifier.weight(1f))
+            StatChip("${stats.routesCompletedToday}",             "routes","Routes today",    Modifier.weight(1f))
+        }
+        Spacer(Modifier.height(14.dp))
+        Text("This Week",
+            style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),
+            modifier = Modifier.padding(bottom = 8.dp).semantics { heading() })
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            StatChip("%.1f".format(stats.distanceWalkedWeekKm),  "km",    "Distance this week", Modifier.weight(1f))
+            StatChip("${stats.stepsWeek}",                        "steps", "Steps this week",    Modifier.weight(1f))
+            StatChip("${stats.routesCompletedWeek}",              "routes","Routes this week",   Modifier.weight(1f))
+        }
+    }
+}
+
+@Composable
+private fun StatChip(value: String, unit: String, desc: String, modifier: Modifier) {
+    Surface(modifier.semantics { contentDescription = "$value $unit. $desc." },
+        color = Color(0xFFE8F5E9), shape = RoundedCornerShape(10.dp)) {
+        Column(Modifier.padding(10.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+            Text(value,
+                style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Bold, fontSize = 20.sp),
+                color = Color(0xFF2E7D32))
+            Text(unit, style = MaterialTheme.typography.labelSmall, color = Color(0xFF4CAF50))
+        }
+    }
+}
+
+// ── Section 3: Emergency — READ-ONLY; editing is in Settings ─────────────────
+
+@Composable
+private fun EmergencyReadOnlySection(settings: EmergencySettings) {
+    val contact = settings.contacts.firstOrNull()
+    ProfileSectionCard(
+        title = "Emergency",
+        icon = Icons.Default.ContactPhone,
+        iconColor = Color(0xFFE53935)
+    ) {
+        // Read-only contact row with notice to edit in Settings
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            color = Color(0xFFFFEBEE),
+            shape = RoundedCornerShape(12.dp)
+        ) {
+            Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                Surface(Modifier.size(40.dp), CircleShape, color = Color(0xFFE53935).copy(alpha = 0.15f)) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(Icons.Default.ContactPhone, null, tint = Color(0xFFE53935), modifier = Modifier.size(20.dp))
+                    }
+                }
+                Spacer(Modifier.width(12.dp))
+                Column(Modifier.weight(1f)) {
+                    Text("Emergency Contact",
+                        style = MaterialTheme.typography.labelSmall, color = Color(0xFFE53935))
+                    Text(
+                        contact?.name?.ifBlank { "Not set" } ?: "Not set",
+                        style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Medium)
+                    )
+                    if (contact?.phoneNumber?.isNotBlank() == true)
+                        Text(contact.phoneNumber, style = MaterialTheme.typography.bodySmall, color = Color(0xFF666666))
+                }
+            }
         }
 
-        // Home location
-        InfoRow(
-            icon = Icons.Default.Home,
-            iconColor = Color(0xFF4CAF50),
-            label = "Home Location",
-            value = profile.homeLocation.ifEmpty { "Not set" },
-            accessibilityDescription = if (profile.homeLocation.isNotEmpty())
-                "Home location: ${profile.homeLocation}"
-            else
-                "Home location: Not set"
+        Spacer(Modifier.height(8.dp))
+
+        // Emergency message — read-only preview
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            color = Color(0xFFFFF8E1),
+            shape = RoundedCornerShape(12.dp)
+        ) {
+            Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Default.Info, null, tint = Color(0xFFE65100), modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(8.dp))
+                Text("To edit emergency contact or message, go to Settings → Safety & Emergency.",
+                    style = MaterialTheme.typography.bodySmall, color = Color(0xFFE65100))
+            }
+        }
+    }
+}
+
+// ── Section 4: Device Status (NO battery) ───────────────────────────────────
+
+@Composable
+private fun DeviceStatusSection(deviceStatus: DeviceStatus) {
+    val w   = deviceStatus.wearableDevice
+    val gps = deviceStatus.gpsStatus
+    ProfileSectionCard(title = "Device Status", icon = Icons.Default.Watch, iconColor = Color(0xFF9C27B0)) {
+        DeviceStatusRow(
+            icon        = if (w.isConnected) Icons.Default.BluetoothConnected else Icons.Default.BluetoothDisabled,
+            iconColor   = if (w.isConnected) Color(0xFF4CAF50) else Color(0xFFE65100),
+            bgColor     = if (w.isConnected) Color(0xFFE8F5E9) else Color(0xFFFFF3E0),
+            label       = w.name.ifEmpty { "Wearable (ESP32)" },
+            status      = if (w.isConnected) "Connected" else "Disconnected",
+            statusColor = if (w.isConnected) Color(0xFF4CAF50) else Color(0xFFE65100),
+            desc        = if (w.isConnected) "Wearable connected: ${w.name}" else "Wearable disconnected"
         )
-
-        Spacer(modifier = Modifier.height(16.dp))
-
-        // Work/School location
-        InfoRow(
-            icon = Icons.Default.Work,
-            iconColor = Color(0xFFFF9800),
-            label = "Work/School Location",
-            value = profile.workLocation.ifEmpty { "Not set" },
-            accessibilityDescription = if (profile.workLocation.isNotEmpty())
-                "Work or school location: ${profile.workLocation}"
-            else
-                "Work or school location: Not set"
+        Spacer(Modifier.height(10.dp))
+        DeviceStatusRow(
+            icon        = if (gps == GpsStatus.READY) Icons.Default.GpsFixed else Icons.Default.GpsNotFixed,
+            iconColor   = when (gps) { GpsStatus.READY -> Color(0xFF4CAF50); GpsStatus.SEARCHING -> Color(0xFFF57C00); else -> Color(0xFFE53935) },
+            bgColor     = when (gps) { GpsStatus.READY -> Color(0xFFE8F5E9); GpsStatus.SEARCHING -> Color(0xFFFFF3E0); else -> Color(0xFFFFEBEE) },
+            label       = "GPS",
+            status      = gps.displayName,
+            statusColor = when (gps) { GpsStatus.READY -> Color(0xFF4CAF50); GpsStatus.SEARCHING -> Color(0xFFF57C00); else -> Color(0xFFE53935) },
+            desc        = "GPS status: ${gps.displayName}"
         )
     }
 }
 
 @Composable
-private fun InfoRow(
-    icon: ImageVector,
-    iconColor: Color,
-    label: String,
-    value: String,
-    accessibilityDescription: String
+private fun DeviceStatusRow(
+    icon: ImageVector, iconColor: Color, bgColor: Color,
+    label: String, status: String, statusColor: Color, desc: String
 ) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(12.dp))
-            .background(Color(0xFFF5F5F5))
-            .padding(16.dp)
-            .semantics(mergeDescendants = true) {
-                contentDescription = accessibilityDescription
-            },
+            .background(bgColor)
+            .padding(14.dp)
+            .semantics(mergeDescendants = true) { contentDescription = desc },
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Surface(
-            modifier = Modifier.size(44.dp),
-            shape = CircleShape,
-            color = iconColor.copy(alpha = 0.15f)
-        ) {
+        Surface(Modifier.size(40.dp), CircleShape, color = iconColor.copy(alpha = 0.20f)) {
             Box(contentAlignment = Alignment.Center) {
-                Icon(
-                    imageVector = icon,
-                    contentDescription = null,
-                    tint = iconColor,
-                    modifier = Modifier.size(24.dp)
-                )
+                Icon(icon, null, tint = iconColor, modifier = Modifier.size(22.dp))
             }
         }
-        Spacer(modifier = Modifier.width(16.dp))
-        Column {
-            Text(
-                text = label,
-                style = MaterialTheme.typography.bodySmall,
-                color = Color(0xFF666666),
-                fontSize = 13.sp
-            )
-            Text(
-                text = value,
-                style = MaterialTheme.typography.bodyLarge.copy(
-                    fontWeight = FontWeight.Medium,
-                    fontSize = 16.sp
-                ),
-                color = Color(0xFF1A1A1A)
-            )
+        Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f)) {
+            Text(label, style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Medium))
+            Text(status, style = MaterialTheme.typography.bodySmall, color = statusColor)
         }
     }
 }
 
-// ============================================
-// Section 2: Health & Mobility Progress
-// ============================================
+// ── Section 5: Voice feedback toggle ─────────────────────────────────────────
 
 @Composable
-private fun HealthProgressSection(stats: HealthStats) {
-    SectionCard(
-        title = "Health & Mobility",
-        titleDescription = "Health and Mobility section. Your walking progress and activity statistics.",
-        icon = Icons.AutoMirrored.Filled.DirectionsWalk,
-        iconColor = Color(0xFF4CAF50)
-    ) {
-        // Today's stats heading
-        Text(
-            text = "Today",
-            style = MaterialTheme.typography.titleMedium.copy(
-                fontWeight = FontWeight.SemiBold,
-                fontSize = 16.sp
-            ),
-            color = Color(0xFF1A1A1A),
-            modifier = Modifier
-                .semantics { heading() }
-                .padding(bottom = 12.dp)
-        )
-
-        // Today stats row
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            ProgressStatCard(
-                value = "${stats.distanceWalkedTodayKm}",
-                unit = "km",
-                label = "Distance",
-                accessibilityDescription = "You walked ${stats.distanceWalkedTodayKm} kilometers today.",
-                modifier = Modifier.weight(1f)
-            )
-            ProgressStatCard(
-                value = "${stats.stepsToday}",
-                unit = "steps",
-                label = "Steps",
-                accessibilityDescription = "You took ${stats.stepsToday} steps today.",
-                modifier = Modifier.weight(1f)
-            )
-            ProgressStatCard(
-                value = "${stats.routesCompletedToday}",
-                unit = "routes",
-                label = "Completed",
-                accessibilityDescription = "You completed ${stats.routesCompletedToday} routes today.",
-                modifier = Modifier.weight(1f)
-            )
-        }
-
-        Spacer(modifier = Modifier.height(20.dp))
-
-        // This Week heading
-        Text(
-            text = "This Week",
-            style = MaterialTheme.typography.titleMedium.copy(
-                fontWeight = FontWeight.SemiBold,
-                fontSize = 16.sp
-            ),
-            color = Color(0xFF1A1A1A),
-            modifier = Modifier
-                .semantics { heading() }
-                .padding(bottom = 12.dp)
-        )
-
-        // Week stats row
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            ProgressStatCard(
-                value = "${stats.distanceWalkedWeekKm}",
-                unit = "km",
-                label = "Distance",
-                accessibilityDescription = "You walked ${stats.distanceWalkedWeekKm} kilometers this week.",
-                modifier = Modifier.weight(1f)
-            )
-            ProgressStatCard(
-                value = "${stats.stepsWeek}",
-                unit = "steps",
-                label = "Steps",
-                accessibilityDescription = "You took ${stats.stepsWeek} steps this week.",
-                modifier = Modifier.weight(1f)
-            )
-            ProgressStatCard(
-                value = "${stats.routesCompletedWeek}",
-                unit = "routes",
-                label = "Completed",
-                accessibilityDescription = "You completed ${stats.routesCompletedWeek} routes this week.",
-                modifier = Modifier.weight(1f)
-            )
-        }
-    }
-}
-
-@Composable
-private fun ProgressStatCard(
-    value: String,
-    unit: String,
-    label: String,
-    accessibilityDescription: String,
-    modifier: Modifier = Modifier
-) {
-    Surface(
-        modifier = modifier
-            .semantics(mergeDescendants = true) {
-                contentDescription = accessibilityDescription
-            },
-        color = Color(0xFFE8F5E9),
-        shape = RoundedCornerShape(12.dp)
-    ) {
-        Column(
-            modifier = Modifier.padding(12.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            Text(
-                text = value,
-                style = MaterialTheme.typography.headlineSmall.copy(
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 24.sp
-                ),
-                color = Color(0xFF2E7D32)
-            )
-            Text(
-                text = unit,
-                style = MaterialTheme.typography.bodySmall,
-                color = Color(0xFF4CAF50),
-                fontSize = 12.sp
-            )
-            Spacer(modifier = Modifier.height(4.dp))
-            Text(
-                text = label,
-                style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Medium),
-                color = Color(0xFF424242),
-                fontSize = 12.sp
-            )
-        }
-    }
-}
-
-// ============================================
-// Section 3: Emergency Overview (Read-Only)
-// ============================================
-
-@Composable
-private fun EmergencyOverviewSection(settings: EmergencySettings) {
-    val contactCount = settings.contacts.size
-    val contactsDescription = when (contactCount) {
-        0 -> "No emergency contacts saved."
-        1 -> "Emergency contacts: 1 saved."
-        else -> "Emergency contacts: $contactCount saved."
-    }
-
-    SectionCard(
-        title = "Emergency Overview",
-        titleDescription = "Emergency Overview section. Quick view of your safety settings.",
-        icon = Icons.Default.ContactPhone,
-        iconColor = Color(0xFFE53935)
-    ) {
-        // single expanded state for the whole contacts list
-        val expanded = remember { androidx.compose.runtime.mutableStateOf(false) }
-
-        // Slightly inset surface to make container appear smaller than the card
-        Surface(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 8.dp) // inset to make container slightly smaller
-                .clip(RoundedCornerShape(12.dp)),
-            color = Color(0xFFFFEBEE)
-        ) {
-            Column {
-                // Summary row (clickable) toggles expansion for the entire list
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { expanded.value = !expanded.value }
-                        .padding(16.dp)
-                        .semantics(mergeDescendants = true) {
-                            contentDescription = contactsDescription
-                        },
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Surface(
-                        modifier = Modifier.size(44.dp),
-                        shape = CircleShape,
-                        color = Color(0xFFE53935).copy(alpha = 0.2f)
-                    ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            Icon(
-                                imageVector = Icons.Default.ContactPhone,
-                                contentDescription = null,
-                                tint = Color(0xFFE53935),
-                                modifier = Modifier.size(24.dp)
-                            )
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.width(16.dp))
-
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = "Emergency Contacts",
-                            style = MaterialTheme.typography.bodyLarge.copy(
-                                fontWeight = FontWeight.Medium,
-                                fontSize = 16.sp
-                            ),
-                            color = Color(0xFF1A1A1A)
-                        )
-                        Text(
-                            text = when (contactCount) {
-                                0 -> "None saved"
-                                1 -> "1 contact saved"
-                                else -> "$contactCount contacts saved"
-                            },
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = Color(0xFFE53935)
-                        )
-                    }
-
-                    Icon(
-                        imageVector = if (expanded.value) Icons.Default.ArrowDropUp else Icons.Default.ArrowDropDown,
-                        contentDescription = if (expanded.value) "Collapse contacts" else "Expand contacts",
-                        tint = Color(0xFF666666),
-                        modifier = Modifier.size(28.dp)
-                    )
-                }
-
-                // Stronger divider to create a clearer 'stack' separation
-                if (expanded.value && contactCount > 0) {
-                    HorizontalDivider(color = Color(0xFF9E9E9E), thickness = 0.5.dp)
-
-                    // contact rows inside the same continuous container; remove top padding so first card
-                    // connects directly to the divider (stack effect). Increase horizontal inset so cards
-                    // appear narrower (smaller left/right visual width).
-                    Column(
-                        modifier = Modifier.padding(
-                            start = 24.dp,
-                            end = 24.dp,
-                            top = 0.dp,
-                            bottom = 8.dp
-                        )
-                    ) {
-                        settings.contacts.forEachIndexed { idx, contact ->
-                            // Each contact is rendered with transparent container and no elevation so it visually
-                            // connects (stacks) under the summary divider.
-                            val isFirst = idx == 0
-                            Card(
-                                // make each card narrower by filling a fraction of the available width
-                                modifier = Modifier
-                                    .fillMaxWidth(0.86f)
-                                    .offset(y = (-(4 * idx)).dp)
-                                    .zIndex((idx + 1).toFloat())
-                                    .align(Alignment.CenterHorizontally),
-                                // make the card transparent so there's no white background
-                                colors = CardDefaults.cardColors(containerColor = Color.Transparent),
-                                // remove elevation to avoid separate surface shadow
-                                elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
-                                // flatten top corners for the first item so it lines up with the divider
-                                shape = if (isFirst) RoundedCornerShape(
-                                    topStart = 0.dp,
-                                    topEnd = 0.dp,
-                                    bottomStart = 10.dp,
-                                    bottomEnd = 10.dp
-                                ) else RoundedCornerShape(10.dp)
-                            ) {
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        // reduce top padding for the first item so it visually 'connects' to the divider
-                                        .padding(
-                                            horizontal = 12.dp,
-                                            vertical = if (isFirst) 4.dp else 12.dp
-                                        )
-                                        .semantics(mergeDescendants = true) {
-                                            contentDescription =
-                                                "Emergency contact ${contact.name.ifEmpty { "Unnamed" }}"
-                                        },
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Surface(
-                                        modifier = Modifier.size(40.dp),
-                                        shape = CircleShape,
-                                        color = Color(0xFFE53935).copy(alpha = 0.15f)
-                                    ) {
-                                        Box(contentAlignment = Alignment.Center) {
-                                            Icon(
-                                                imageVector = Icons.Default.ContactPhone,
-                                                contentDescription = null,
-                                                tint = Color(0xFFE53935),
-                                                modifier = Modifier.size(20.dp)
-                                            )
-                                        }
-                                    }
-
-                                    Spacer(modifier = Modifier.width(12.dp))
-
-                                    Column(modifier = Modifier.weight(1f)) {
-                                        Text(
-                                            text = contact.name.ifEmpty { "Unnamed contact" },
-                                            style = MaterialTheme.typography.bodyLarge.copy(
-                                                fontWeight = FontWeight.Medium
-                                            ),
-                                            color = Color(0xFF1A1A1A)
-                                        )
-                                        Text(
-                                            text = contact.phoneNumber.ifEmpty { "No number" },
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = Color(0xFF666666)
-                                        )
-                                    }
-                                }
-                            }
-
-                            // visible divider between stacked cards
-                            if (idx < settings.contacts.lastIndex) {
-                                HorizontalDivider(color = Color(0xFF9E9E9E), thickness = 2.dp)
-                                Spacer(modifier = Modifier.height(6.dp))
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // Auto-Arrival Notifications — placed outside the expandable contacts surface so it is always visible
-        Spacer(modifier = Modifier.height(8.dp))
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 8.dp)
-                .clip(RoundedCornerShape(12.dp))
-                .background(Color(0xFFF5F5F5))
-                .padding(12.dp)
-                .semantics(mergeDescendants = true) {
-                    contentDescription =
-                        if (settings.autoArrivalNotification) "Auto-arrival enabled" else "Auto-arrival disabled"
-                },
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Surface(
-                modifier = Modifier.size(44.dp),
-                shape = CircleShape,
-                color = if (settings.autoArrivalNotification) Color(0xFF4CAF50).copy(alpha = 0.15f) else Color(
-                    0xFF9E9E9E
-                ).copy(alpha = 0.15f)
-            ) {
-                Box(contentAlignment = Alignment.Center) {
-                    Icon(
-                        imageVector = Icons.Default.Notifications,
-                        contentDescription = null,
-                        tint = if (settings.autoArrivalNotification) Color(0xFF4CAF50) else Color(
-                            0xFF9E9E9E
-                        ),
-                        modifier = Modifier.size(24.dp)
-                    )
-                }
-            }
-            Spacer(modifier = Modifier.width(16.dp))
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = "Auto-Arrival Notifications",
-                    style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Medium),
-                    color = Color(0xFF1A1A1A)
-                )
-                Text(
-                    text = if (settings.autoArrivalNotification) "Enabled" else "Disabled",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = if (settings.autoArrivalNotification) Color(0xFF4CAF50) else Color(
-                        0xFF666666
-                    )
-                )
-            }
-        }
-    }
-}
-
-// ============================================
-// Section 4: Device Status Overview (Read-Only)
-// ============================================
-
-@Composable
-private fun DeviceStatusOverviewSection(deviceStatus: DeviceStatus) {
-    val wearable = deviceStatus.wearableDevice
-    val gps = deviceStatus.gpsStatus
-
-    // Build wearable accessibility description
-    val wearableDescription = if (wearable.isConnected) {
-        val battery = wearable.batteryLevel?.let { "Battery $it percent." } ?: ""
-        "Wearable connected. ${wearable.name}. $battery"
-    } else {
-        "Wearable disconnected."
-    }
-
-    // Build GPS accessibility description
-    val gpsDescription = when (gps) {
-        GpsStatus.READY -> "GPS is ready."
-        GpsStatus.SEARCHING -> "GPS is searching for signal."
-        GpsStatus.UNAVAILABLE -> "GPS is unavailable."
-    }
-
-    SectionCard(
-        title = "Device Status",
-        titleDescription = "Device Status section. Shows connected devices and GPS status.",
-        icon = Icons.Default.Watch,
-        iconColor = Color(0xFF9C27B0)
-    ) {
-        // Wearable device status
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(12.dp))
-                .background(
-                    if (wearable.isConnected) Color(0xFFE8F5E9) else Color(0xFFFFF3E0)
-                )
-                .padding(16.dp)
-                .semantics(mergeDescendants = true) {
-                    contentDescription = wearableDescription
-                },
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Surface(
-                modifier = Modifier.size(44.dp),
-                shape = CircleShape,
-                color = if (wearable.isConnected)
-                    Color(0xFF4CAF50).copy(alpha = 0.2f)
-                else
-                    Color(0xFFE65100).copy(alpha = 0.2f)
-            ) {
-                Box(contentAlignment = Alignment.Center) {
-                    Icon(
-                        imageVector = if (wearable.isConnected) Icons.Default.BluetoothConnected else Icons.Default.BluetoothDisabled,
-                        contentDescription = null,
-                        tint = if (wearable.isConnected) Color(0xFF4CAF50) else Color(0xFFE65100),
-                        modifier = Modifier.size(24.dp)
-                    )
-                }
-            }
-            Spacer(modifier = Modifier.width(16.dp))
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = wearable.name.ifEmpty { "No Device" },
-                    style = MaterialTheme.typography.bodyLarge.copy(
-                        fontWeight = FontWeight.Medium,
-                        fontSize = 16.sp
-                    ),
-                    color = Color(0xFF1A1A1A)
-                )
-                Text(
-                    text = if (wearable.isConnected) "Connected" else "Disconnected",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = if (wearable.isConnected) Color(0xFF4CAF50) else Color(0xFFE65100)
-                )
-            }
-            // Battery level
-            if (wearable.batteryLevel != null && wearable.isConnected) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(
-                        imageVector = Icons.Default.BatteryFull,
-                        contentDescription = null,
-                        tint = when {
-                            wearable.batteryLevel > 50 -> Color(0xFF4CAF50)
-                            wearable.batteryLevel > 20 -> Color(0xFFF57C00)
-                            else -> Color(0xFFE53935)
-                        },
-                        modifier = Modifier.size(20.dp)
-                    )
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text(
-                        text = "${wearable.batteryLevel}%",
-                        style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
-                        color = Color(0xFF424242)
-                    )
-                }
-            }
-        }
-
-        Spacer(modifier = Modifier.height(12.dp))
-
-        // GPS status
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(12.dp))
-                .background(
-                    when (gps) {
-                        GpsStatus.READY -> Color(0xFFE8F5E9)
-                        GpsStatus.SEARCHING -> Color(0xFFFFF3E0)
-                        GpsStatus.UNAVAILABLE -> Color(0xFFFFEBEE)
-                    }
-                )
-                .padding(16.dp)
-                .semantics(mergeDescendants = true) {
-                    contentDescription = gpsDescription
-                },
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Surface(
-                modifier = Modifier.size(44.dp),
-                shape = CircleShape,
-                color = when (gps) {
-                    GpsStatus.READY -> Color(0xFF4CAF50).copy(alpha = 0.2f)
-                    GpsStatus.SEARCHING -> Color(0xFFF57C00).copy(alpha = 0.2f)
-                    GpsStatus.UNAVAILABLE -> Color(0xFFE53935).copy(alpha = 0.2f)
-                }
-            ) {
-                Box(contentAlignment = Alignment.Center) {
-                    Icon(
-                        imageVector = if (gps == GpsStatus.READY) Icons.Default.GpsFixed else Icons.Default.GpsNotFixed,
-                        contentDescription = null,
-                        tint = when (gps) {
-                            GpsStatus.READY -> Color(0xFF4CAF50)
-                            GpsStatus.SEARCHING -> Color(0xFFF57C00)
-                            GpsStatus.UNAVAILABLE -> Color(0xFFE53935)
-                        },
-                        modifier = Modifier.size(24.dp)
-                    )
-                }
-            }
-            Spacer(modifier = Modifier.width(16.dp))
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = "GPS Status",
-                    style = MaterialTheme.typography.bodyLarge.copy(
-                        fontWeight = FontWeight.Medium,
-                        fontSize = 16.sp
-                    ),
-                    color = Color(0xFF1A1A1A)
-                )
-                Text(
-                    text = gps.displayName,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = when (gps) {
-                        GpsStatus.READY -> Color(0xFF4CAF50)
-                        GpsStatus.SEARCHING -> Color(0xFFF57C00)
-                        GpsStatus.UNAVAILABLE -> Color(0xFFE53935)
-                    }
-                )
-            }
-            if (gps == GpsStatus.READY) {
-                Icon(
-                    imageVector = Icons.Default.Check,
-                    contentDescription = null,
-                    tint = Color(0xFF4CAF50),
-                    modifier = Modifier.size(24.dp)
-                )
-            }
-        }
-    }
-}
-
-// ============================================
-// Section 5: Minimal Profile Settings
-// ============================================
-
-@Composable
-private fun ProfileSettingsSection(
-    settings: ProfileSettings,
-    onToggleVoiceFeedback: () -> Unit
-) {
-    SectionCard(
-        title = "Profile Settings",
-        titleDescription = "Profile Settings section. Optional toggles for personal monitoring.",
-        icon = Icons.Default.RecordVoiceOver,
-        iconColor = Color(0xFF00BCD4)
-    ) {
-        // Voice feedback for progress toggle
+private fun ProfileSettingsSection(settings: ProfileSettings, onToggleVoiceFeedback: () -> Unit) {
+    ProfileSectionCard(title = "Profile Settings", icon = Icons.Default.RecordVoiceOver, iconColor = Color(0xFF00BCD4)) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(12.dp))
                 .clickable(onClick = onToggleVoiceFeedback)
                 .background(Color(0xFFF5F5F5))
-                .padding(16.dp)
+                .padding(14.dp)
                 .semantics(mergeDescendants = true) {
-                    contentDescription = if (settings.voiceFeedbackForProgress) {
-                        "Voice feedback for progress updates is enabled. Tap to disable."
-                    } else {
-                        "Voice feedback for progress updates is disabled. Tap to enable."
-                    }
+                    contentDescription = if (settings.voiceFeedbackForProgress)
+                        "Voice feedback for progress enabled. Tap to disable."
+                    else "Voice feedback for progress disabled. Tap to enable."
                 },
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Surface(
-                modifier = Modifier.size(44.dp),
-                shape = CircleShape,
-                color = Color(0xFF00BCD4).copy(alpha = 0.15f)
-            ) {
+            Surface(Modifier.size(40.dp), CircleShape, color = Color(0xFF00BCD4).copy(alpha = 0.15f)) {
                 Box(contentAlignment = Alignment.Center) {
-                    Icon(
-                        imageVector = Icons.Default.RecordVoiceOver,
-                        contentDescription = null,
-                        tint = Color(0xFF00BCD4),
-                        modifier = Modifier.size(24.dp)
-                    )
+                    Icon(Icons.Default.RecordVoiceOver, null, tint = Color(0xFF00BCD4), modifier = Modifier.size(22.dp))
                 }
             }
-            Spacer(modifier = Modifier.width(16.dp))
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = "Voice Feedback for Progress",
-                    style = MaterialTheme.typography.bodyLarge.copy(
-                        fontWeight = FontWeight.Medium,
-                        fontSize = 16.sp
-                    ),
-                    color = Color(0xFF1A1A1A)
-                )
-                Text(
-                    text = "Announce walking and route updates",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = Color(0xFF666666)
-                )
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                Text("Voice Feedback for Progress",
+                    style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Medium))
+                Text("Announce walking & route updates",
+                    style = MaterialTheme.typography.bodySmall, color = Color(0xFF666666))
             }
             Switch(
                 checked = settings.voiceFeedbackForProgress,
                 onCheckedChange = { onToggleVoiceFeedback() },
-                colors = SwitchDefaults.colors(
-                    checkedThumbColor = Color.White,
-                    checkedTrackColor = Color(0xFF4CAF50)
-                )
+                colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = Color(0xFF4CAF50))
             )
         }
     }
 }
 
-// ============================================
-// Shared Components
-// ============================================
+// ── Clickable info row ────────────────────────────────────────────────────────
 
 @Composable
-private fun SectionCard(
-    title: String,
-    titleDescription: String,
-    icon: ImageVector,
-    iconColor: Color,
-    content: @Composable () -> Unit
+private fun InfoRow(
+    icon: ImageVector, iconColor: Color, label: String, value: String,
+    valueColor: Color = Color(0xFF1A1A1A)
 ) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = Color.White),
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
-        shape = RoundedCornerShape(16.dp)
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(Color(0xFFF5F5F5))
+            .padding(14.dp)
+            .semantics(mergeDescendants = true) { contentDescription = "$label: $value." },
+        verticalAlignment = Alignment.CenterVertically
     ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp)
-        ) {
-            // Section header
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .semantics {
-                        contentDescription = titleDescription
-                        heading()
-                    },
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Icon(
-                    imageVector = icon,
-                    contentDescription = null,
-                    tint = iconColor,
-                    modifier = Modifier.size(24.dp)
-                )
-                Spacer(modifier = Modifier.width(12.dp))
-                Text(
-                    text = title,
-                    style = MaterialTheme.typography.titleLarge.copy(
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 20.sp
-                    ),
-                    color = Color(0xFF1A1A1A)
-                )
+        Surface(Modifier.size(40.dp), shape = CircleShape, color = iconColor.copy(alpha = 0.15f)) {
+            Box(contentAlignment = Alignment.Center) {
+                Icon(icon, null, tint = iconColor, modifier = Modifier.size(22.dp))
             }
-
-            Spacer(modifier = Modifier.height(16.dp))
-
-            content()
         }
+        Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f)) {
+            Text(label, style = MaterialTheme.typography.labelSmall, color = Color(0xFF666666))
+            Text(value, style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Medium), color = valueColor)
+        }
+        // intentionally no chevron and no clickable affordance
     }
 }
 
-@Preview(showBackground = true)
+// ── Shared card wrapper ───────────────────────────────────────────────────────
+
 @Composable
-fun ProfileScreenPreview() {
-    ProfileScreen()
+private fun ProfileSectionCard(
+    title: String, icon: ImageVector, iconColor: Color,
+    actionIcon: ImageVector? = null, onAction: (() -> Unit)? = null,
+    actionDescription: String = "",
+    content: @Composable ColumnScope.() -> Unit
+) {
+    Card(
+        Modifier.fillMaxWidth(),
+        colors    = CardDefaults.cardColors(containerColor = Color.White),
+        elevation = CardDefaults.cardElevation(2.dp),
+        shape     = RoundedCornerShape(16.dp)
+    ) {
+        Column(Modifier.fillMaxWidth().padding(16.dp)) {
+            Row(
+                Modifier.fillMaxWidth().semantics { heading() },
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(icon, null, tint = iconColor, modifier = Modifier.size(22.dp))
+                Spacer(Modifier.width(10.dp))
+                Text(title,
+                    style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold, fontSize = 18.sp),
+                    modifier = Modifier.weight(1f))
+                if (actionIcon != null && onAction != null) {
+                    IconButton(onAction, Modifier.semantics { contentDescription = actionDescription }) {
+                        Icon(actionIcon, null, tint = Color(0xFF666666), modifier = Modifier.size(20.dp))
+                    }
+                }
+            }
+            Spacer(Modifier.height(14.dp))
+            content()
+        }
+    }
 }

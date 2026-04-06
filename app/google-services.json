@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "515207186411",
+    "project_id": "lakbaylaya-85675747",
+    "storage_bucket": "lakbaylaya-85675747.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:515207186411:android:e11db034f5f335b305bbae",
+        "android_client_info": {
+          "package_name": "com.example.lakbaylaya"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDN3tl3ugjVEKuEmRZJrqTYJcVRXd-NNR4"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

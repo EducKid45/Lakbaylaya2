@@ -56,6 +56,7 @@ fun FloatingSearchBar(
     query: String,
     isOverlayActive: Boolean,
     isMicActive: Boolean = false,
+    isVoiceSearchActive: Boolean = false,
     onQueryChange: (String) -> Unit,
     onSearchBarClick: () -> Unit,
     onBackClick: () -> Unit,
@@ -66,7 +67,6 @@ fun FloatingSearchBar(
     val focusRequester = remember { FocusRequester() }
     val focusManager = LocalFocusManager.current
 
-    // Use TextFieldValue to control cursor position
     var textFieldValue by remember {
         mutableStateOf(TextFieldValue(text = query, selection = TextRange(query.length)))
     }
@@ -74,7 +74,6 @@ fun FloatingSearchBar(
     // Update TextFieldValue when query changes externally
     LaunchedEffect(query) {
         if (textFieldValue.text != query) {
-            // Position cursor at end when text is updated externally
             textFieldValue = TextFieldValue(
                 text = query,
                 selection = TextRange(query.length)
@@ -82,16 +81,16 @@ fun FloatingSearchBar(
         }
     }
 
-    // Auto-focus when overlay becomes active and position cursor at end
+    // Auto-focus when overlay becomes active — but NOT during voice search
+    // (voice search must not open the keyboard or trigger onValueChange/debounce)
     LaunchedEffect(isOverlayActive) {
-        if (isOverlayActive) {
-            // Position cursor at end when activating search
+        if (isOverlayActive && !isVoiceSearchActive) {
             textFieldValue = TextFieldValue(
                 text = query,
                 selection = TextRange(query.length)
             )
             focusRequester.requestFocus()
-        } else {
+        } else if (!isOverlayActive) {
             focusManager.clearFocus()
         }
     }

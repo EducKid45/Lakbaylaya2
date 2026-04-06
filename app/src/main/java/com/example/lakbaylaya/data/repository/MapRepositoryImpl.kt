@@ -1,5 +1,6 @@
 package com.example.lakbaylaya.data.repository
 
+import android.util.Log
 import com.example.lakbaylaya.data.api.GeoapifyApi
 import com.example.lakbaylaya.data.api.GeoapifyApiImpl
 import com.example.lakbaylaya.data.api.models.GeocodeResponse
@@ -12,9 +13,15 @@ import com.example.lakbaylaya.ui.screens.map.models.ReverseGeocodedLocation
 import com.example.lakbaylaya.ui.screens.map.models.RouteOption
 import com.example.lakbaylaya.ui.screens.map.models.RoutePoint
 import com.example.lakbaylaya.ui.screens.map.models.SearchResult
+import com.example.lakbaylaya.ui.screens.map.navigation.tts.GeoapifyStep
+import com.example.lakbaylaya.ui.screens.map.navigation.tts.StepOsmTags
+import com.example.lakbaylaya.ui.screens.map.navigation.tts.buildSpokenInstruction
+import com.example.lakbaylaya.ui.screens.map.navigation.tts.simplifyTurn
 import com.example.lakbaylaya.utils.DistanceUtils
+import java.util.LinkedHashMap
 import java.util.Locale
 import kotlin.math.abs
+import kotlin.math.pow
 
 /**
  * Implementation of MapRepository using Geoapify API
@@ -27,6 +34,37 @@ import kotlin.math.abs
 class MapRepositoryImpl(
     private val geoapifyApi: GeoapifyApi = GeoapifyApiImpl()
 ) : MapRepository {
+
+    // Simple in-memory cache for amenity/place lookups keyed by rounded coordinates
+    private val amenityCacheLock = Any()
+    private val amenityCache = object : LinkedHashMap<String, String?>(64, 0.75f, true) {
+        private val MAX_ENTRIES = 256
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, String?>?): Boolean {
+            return size > MAX_ENTRIES
+        }
+    }
+
+    private fun cacheKeyFor(lat: Double, lon: Double, precision: Int = 4): String {
+        // Round coordinates to given precision to increase cache hits
+        val factor = 10.0.pow(precision)
+        val rlat = (lat * factor).toInt() / factor
+        val rlon = (lon * factor).toInt() / factor
+        return "${rlat}_$rlon"
+    }
+
+    private fun getCachedAmenity(lat: Double, lon: Double): String? {
+        val key = cacheKeyFor(lat, lon)
+        synchronized(amenityCacheLock) {
+            return amenityCache[key]
+        }
+    }
+
+    private fun putCachedAmenity(lat: Double, lon: Double, value: String?) {
+        val key = cacheKeyFor(lat, lon)
+        synchronized(amenityCacheLock) {
+            amenityCache[key] = value
+        }
+    }
 
     override suspend fun searchPlaces(
         query: String,
@@ -420,23 +458,149 @@ class MapRepositoryImpl(
         return latEqual && lonEqual
     }
 
-    private fun convertRoutingResponseToRouteOptions(response: RoutingResponse): List<RouteOption> {
+    private suspend fun convertRoutingResponseToRouteOptions(response: RoutingResponse): List<RouteOption> {
         return response.features.mapIndexed { index, feature ->
             val props = feature.properties
+
+            // Precompute total steps in this feature to map steps onto geometry when necessary
+            val totalStepsInFeature = props.legs.sumOf { it.steps.size }
+            var stepCounter = 0
 
             // Convert route steps
             val steps = mutableListOf<DirectionStep>()
             props.legs.forEach { leg ->
                 leg.steps.forEach { step ->
+                    val osmTags = StepOsmTags(
+                        highway = step.properties?.osmTags?.highway,
+                        junction = step.properties?.osmTags?.junction,
+                        footway = step.properties?.osmTags?.footway,
+                        surface = step.properties?.osmTags?.surface
+                    )
+
+                    // Try to get lat/lon from step.location (Geoapify may provide [lon, lat] or [lat, lon])
+                    var lat = step.location.getOrNull(1) ?: 0.0
+                    var lon = step.location.getOrNull(0) ?: 0.0
+
+                    // If step.location is empty or zero, fallback to a point sampled from the route geometry
+                    if ((lat == 0.0 && lon == 0.0) || step.location.size < 2) {
+                        val coords = feature.geometry.coordinates
+                        if (coords.isNotEmpty()) {
+                            // Map stepCounter proportionally to geometry coordinates
+                            val coordIndex = if (totalStepsInFeature <= 1) 0 else {
+                                val ratio = stepCounter.toDouble() / (totalStepsInFeature - 1).toDouble()
+                                val idx = (ratio * (coords.size - 1)).toInt().coerceIn(0, coords.size - 1)
+                                idx
+                            }
+                            val chosen = coords.getOrNull(coordIndex)
+                            if (chosen != null && chosen.size >= 2) {
+                                lon = chosen[0]
+                                lat = chosen[1]
+                            }
+                        }
+                    }
+
+                    // Increment step counter after mapping (used for next iteration)
+                    stepCounter++
+
+                    val geoStep = GeoapifyStep(
+                        distanceMeters = step.distance,
+                        bearingBefore = step.bearingBefore,
+                        bearingAfter = step.bearingAfter,
+                        street = step.name,
+                        lat = lat,
+                        lon = lon,
+                        osmTags = osmTags,
+                        rawInstruction = step.instruction.text
+                    )
+
+                    // --- Option A1: reverse-geocode per step to find nearby amenity/place ---
+                    var landmarkCandidate: String? = null
+                    try {
+                        if (lat != 0.0 || lon != 0.0) {
+                            // Check cache first
+                            val cached = getCachedAmenity(lat, lon)
+                            if (cached != null) {
+                                landmarkCandidate = cached
+                                Log.d("MapRepository", "amenity cache hit for $lat,$lon -> $cached")
+                            } else {
+                                // Try small radius first
+                                var found: String? = null
+                                var amenityResult = geoapifyApi.reverseGeocodeWithAmenity(lat, lon, 60)
+                                amenityResult.fold(
+                                    onSuccess = { revResp ->
+                                        val first = revResp.features.firstOrNull()
+                                        if (first != null) {
+                                            found = first.properties.name ?: first.properties.amenity
+                                        }
+                                    },
+                                    onFailure = { /* ignore */ }
+                                )
+
+                                // If not found, try larger radius
+                                if (found.isNullOrBlank()) {
+                                    amenityResult = geoapifyApi.reverseGeocodeWithAmenity(lat, lon, 150)
+                                    amenityResult.fold(
+                                        onSuccess = { revResp ->
+                                            val first = revResp.features.firstOrNull()
+                                            if (first != null) {
+                                                found = first.properties.name ?: first.properties.amenity
+                                            }
+                                        },
+                                        onFailure = { /* ignore */ }
+                                    )
+                                }
+
+                                // If still not found, fallback to reverseGeocode for a place name/formatted address
+                                if (found.isNullOrBlank()) {
+                                    val geocodeResult = geoapifyApi.reverseGeocode(lat, lon)
+                                    geocodeResult.fold(
+                                        onSuccess = { geocode ->
+                                            val name = geocode.name.ifEmpty { geocode.address }
+                                            if (name.isNotBlank()) found = name
+                                        },
+                                        onFailure = { /* ignore */ }
+                                    )
+                                }
+
+                                landmarkCandidate = found?.takeIf { it.isNotBlank() }
+                                // Cache result (including null) to avoid repeated lookups
+                                putCachedAmenity(lat, lon, landmarkCandidate)
+                                Log.d("MapRepository", "amenity lookup for $lat,$lon -> $landmarkCandidate")
+                            }
+                        }
+                    } catch (e: Exception) {
+                        Log.w("MapRepository", "reverseGeocodeWithAmenity failed for step: ${e.message}")
+                    }
+
+                    // Compute delta for debug logging
+                    val rawDelta = geoStep.bearingAfter - geoStep.bearingBefore
+                    val delta = ((rawDelta + 540.0) % 360.0) - 180.0
+
+                    // Compute chosen turn label using same logic as parser
+                    val turnLabel = simplifyTurn(geoStep.bearingBefore, geoStep.bearingAfter, geoStep.rawInstruction)
+
+                    // Debug log to help validate interpretation
+                    Log.d(
+                        "TTSParser",
+                        "Step debug: rawInstruction='${geoStep.rawInstruction}', delta=${String.format(Locale.US, "%.1f", delta)}, turn='$turnLabel', street='${geoStep.street}', landmark='${landmarkCandidate}'"
+                    )
+
                     steps.add(
                         DirectionStep(
                             instruction = step.instruction.text,
                             distanceMeters = step.distance,
                             durationMinutes = (step.time / 60).toInt()
-                                .coerceAtLeast(1), // Convert seconds to minutes
+                                .coerceAtLeast(1),
                             maneuver = mapInstructionTypeToManeuver(step.instruction.type ?: 0),
-                            latitude = step.location.getOrNull(1) ?: 0.0,
-                            longitude = step.location.getOrNull(0) ?: 0.0
+                            latitude = lat,
+                            longitude = lon,
+                            bearingBefore = step.bearingBefore,
+                            bearingAfter = step.bearingAfter,
+                            street = step.name,
+                            osmHighway = step.properties?.osmTags?.highway,
+                            osmJunction = step.properties?.osmTags?.junction,
+                            osmFootway = step.properties?.osmTags?.footway,
+                            spokenInstruction = buildSpokenInstruction(geoStep, landmarkCandidate)
                         )
                     )
                 }

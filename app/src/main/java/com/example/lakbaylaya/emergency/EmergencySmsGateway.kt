@@ -19,14 +19,25 @@ import android.util.Log
  * EmergencySmsGateway: one-tap emergency flow that sends SMS using a provided SmsSender
  * (for example, SemaphoreSmsSender). This class fetches location (if permitted) and sends
  * the composed emergency message via the gateway.
+ *
+ * @param emergencyNumberProvider Lambda called at send-time to get the current emergency number.
  */
 class EmergencySmsGateway(
     private val activity: Activity,
-    private val emergencyNumber: String,
+    private val emergencyNumberProvider: () -> String,
     private val smsSender: SmsSender,
     private val permissionLauncher: ActivityResultLauncher<Array<String>>? = null,
     private val onResult: ((success: Boolean, message: String) -> Unit)? = null
 ) : EmergencyHandler {
+
+    /** Convenience constructor for a fixed number (backwards-compatible). */
+    constructor(
+        activity: Activity,
+        emergencyNumber: String,
+        smsSender: SmsSender,
+        permissionLauncher: ActivityResultLauncher<Array<String>>? = null,
+        onResult: ((success: Boolean, message: String) -> Unit)? = null
+    ) : this(activity, { emergencyNumber }, smsSender, permissionLauncher, onResult)
     private val fusedClient: FusedLocationProviderClient by lazy {
         LocationServices.getFusedLocationProviderClient(activity)
     }
@@ -133,6 +144,14 @@ class EmergencySmsGateway(
     }
 
     private fun sendMessageToGateway(message: String) {
+        val emergencyNumber = emergencyNumberProvider().trim()
+        if (emergencyNumber.isBlank()) {
+            val err = "No emergency contact number set. Please add one in Settings."
+            Log.e(TAG, err)
+            notifyResult(false, err)
+            Toast.makeText(activity, err, Toast.LENGTH_LONG).show()
+            return
+        }
         val sender = SendSmsManager(activity, smsSender)
         sender.send(emergencyNumber, message, object : SmsCallback {
             override fun onSuccess(response: String?) {

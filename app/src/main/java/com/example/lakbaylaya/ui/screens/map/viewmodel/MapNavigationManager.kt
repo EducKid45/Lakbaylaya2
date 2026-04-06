@@ -1,27 +1,49 @@
 package com.example.lakbaylaya.ui.screens.map.viewmodel
 
+import android.app.Application
+import com.example.lakbaylaya.bluetooth.BluetoothManagerHelper
+import com.example.lakbaylaya.bluetooth.Esp32VibrationManager
 import com.example.lakbaylaya.ui.screens.map.models.*
+import com.example.lakbaylaya.ui.screens.map.navigation.pedometer.PedometerStatsTracker
+import com.example.lakbaylaya.ui.screens.map.navigation.tts.AndroidTextToSpeechEngine
+import com.example.lakbaylaya.ui.screens.map.navigation.tts.NavigationInstructionEngine
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.update
 
 /**
  * Manages active navigation lifecycle and GPS-driven updates.
- * Responsibilities moved from MapViewModel for separation of concerns:
- * - startNavigation
- * - updateNavigationLocation
- * - updateNavigationStepCount
- * - stopNavigation
- * - finishNavigation
- *
- * This manager owns the NavigationProgressManager instance and handles
- * step advancement callbacks which update the provided MapState flow.
  */
 class MapNavigationManager(
-    private val state: MutableStateFlow<MapState>
+    private val state: MutableStateFlow<MapState>,
+    private val application: Application? = null
 ) {
 
-    private var navigationProgressManager: com.example.lakbaylaya.ui.screens.map.navigation.progress.NavigationProgressManager? =
-        null
+    /**
+     * Called once when navigation completes (arrival detected).
+     * Parameters: destinationName, latitude, longitude
+     */
+    var onNavigationCompleted: ((destName: String, lat: Double, lon: Double) -> Unit)? = null
+
+    private var navigationProgressManager: com.example.lakbaylaya.ui.screens.map.navigation.progress.NavigationProgressManager? = null
+
+    // TTS + ESP32 instruction engine
+    private val instructionEngine: NavigationInstructionEngine? by lazy {
+        application?.let { app ->
+            val ttsEngine = AndroidTextToSpeechEngine(app).also { it.initialize() }
+            val btHelper  = BluetoothManagerHelper(app)
+            val esp32     = Esp32VibrationManager.getInstance(btHelper)
+            NavigationInstructionEngine(ttsEngine, esp32)
+        }
+    }
+
+    // Pedometer: bridges AndroidStepDetector → NavigationStatsRepository
+    private val pedometerTracker: PedometerStatsTracker? by lazy {
+        application?.let { app ->
+            PedometerStatsTracker(app).apply {
+                onStepUpdate = { steps, _ -> updateNavigationStepCount(steps) }
+            }
+        }
+    }
 
     /** Start active navigation using the currently selected route in state.directionData */
     fun startNavigation() {
@@ -71,7 +93,7 @@ class MapNavigationManager(
                             )
                             onNavigationComplete()
                         },
-                        onDestinationArrived = { arrivalInfo ->
+                        onDestinationArrived = { _ ->
                             android.util.Log.i(
                                 "MapNavigationManager",
                                 "🎯 Destination arrival callback triggered!"
@@ -113,11 +135,11 @@ class MapNavigationManager(
             "Navigation started with ${selectedRoute.steps.size} steps"
         )
         initialStep?.let { step ->
-            android.util.Log.d(
-                "MapNavigationManager",
-                "Initial step ready: ${step.instruction}"
-            )
+            android.util.Log.d("MapNavigationManager", "Initial step ready: ${step.instruction}")
         }
+
+        // Start real pedometer for step / distance tracking
+        pedometerTracker?.start()
     }
 
     /** Called by MapScreen or ViewModel when GPS location updates arrive */
@@ -174,10 +196,11 @@ class MapNavigationManager(
 
         val newNavState = navState.copy(currentStepIndex = stepIndex, distanceCovered = 0.0)
         state.update { it.copy(navigationState = newNavState) }
-        android.util.Log.d(
-            "MapNavigationManager",
-            "Advanced to step $stepIndex: ${step.instruction}"
-        )
+
+        // Speak instruction + send ESP32 vibration
+        instructionEngine?.announceStep(step)
+
+        android.util.Log.d("MapNavigationManager", "Advanced to step $stepIndex: ${step.instruction}")
     }
 
     /** Internal callback: progress update */
@@ -194,26 +217,34 @@ class MapNavigationManager(
         val navState = state.value.navigationState
         if (navState !is NavigationState.Active) return
 
-        // Mark navigation as completed so the UI shows arrival message and Done button
         val completedState = navState.copy(isCompleted = true)
         state.update { it.copy(navigationState = completedState) }
 
-        android.util.Log.i(
-            "MapNavigationManager",
-            "🎯 Navigation marked as completed - UI should now show 'You have arrived!' and Done button"
-        )
+        // Announce arrival via TTS + ESP32
+        val destName = state.value.directionData?.destination?.name ?: "your destination"
+        val destLat  = state.value.directionData?.destination?.latitude ?: 0.0
+        val destLon  = state.value.directionData?.destination?.longitude ?: 0.0
+        instructionEngine?.announceArrival(destName)
+
+        // Stop pedometer and record session (increments routesCompleted in DB)
+        pedometerTracker?.recordSessionComplete()
+        pedometerTracker?.stop()
+
+        // Notify external listeners (e.g. MapViewModel for arrival SMS)
+        onNavigationCompleted?.invoke(destName, destLat, destLon)
+
+        android.util.Log.i("MapNavigationManager", "🎯 Navigation complete")
     }
 
     /** Stop active navigation and return to preview mode */
     fun stopNavigation() {
         navigationProgressManager?.stopNavigation()
+        pedometerTracker?.stop()
         state.update {
             it.copy(
                 navigationState = NavigationState.Inactive,
                 bottomSheetState = it.directionData?.let { data ->
-                    BottomSheetState.DirectionInitial(
-                        data
-                    )
+                    BottomSheetState.DirectionInitial(data)
                 } ?: BottomSheetState.Hidden
             )
         }
@@ -223,6 +254,7 @@ class MapNavigationManager(
     /** Finish navigation explicitly (Done): stop and restore UI */
     fun finishNavigation() {
         navigationProgressManager?.stopNavigation()
+        pedometerTracker?.stop()
         state.update {
             it.copy(
                 navigationState = NavigationState.Inactive,
@@ -231,10 +263,7 @@ class MapNavigationManager(
                 uiMode = UiMode.Normal
             )
         }
-        android.util.Log.d(
-            "MapNavigationManager",
-            "Navigation finished (Done) - returned to normal mode"
-        )
+        android.util.Log.d("MapNavigationManager", "Navigation finished (Done) - returned to normal mode")
     }
 
     /** Test method to manually trigger arrival for debugging */

@@ -1,11 +1,14 @@
 package com.example.lakbaylaya.ui.screens.map.navigation.pedometer
 
 import android.content.Context
+import android.content.pm.PackageManager
 import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
 import android.util.Log
+import androidx.core.content.ContextCompat
+import kotlinx.coroutines.*
 
 /**
  * Android sensor-based implementation of StepDetector
@@ -14,7 +17,7 @@ import android.util.Log
  * distance based on average step length.
  *
  * Falls back to accelerometer-based step detection if step counter
- * is not available.
+ * is not available or if ACTIVITY_RECOGNITION permission is not granted.
  */
 class AndroidStepDetector(
     private val context: Context
@@ -41,8 +44,11 @@ class AndroidStepDetector(
     private var lastAcceleration = 0f
     private var currentAcceleration = 0f
     private var lastStepTime = 0L
-    private val stepThreshold = 10f  // Acceleration threshold for step detection
-    private val minStepInterval = 250L  // Minimum time between steps (ms)
+    // Realistic threshold (magnitude delta) — tuned to detect steps but avoid noise
+    private val stepThreshold = 1.2f  // Acceleration threshold for step detection
+    private val minStepInterval = 300L  // Minimum time between steps (ms)
+
+    private var fallbackJob: Job? = null
 
     companion object {
         private const val TAG = "AndroidStepDetector"
@@ -76,34 +82,75 @@ class AndroidStepDetector(
         onStepDetectedCallback = onStepDetected
         onDistanceUpdatedCallback = onDistanceUpdated
 
+        // If activity recognition permission is missing prefer accelerometer
+        val hasActivityPerm = ContextCompat.checkSelfPermission(
+            context,
+            android.Manifest.permission.ACTIVITY_RECOGNITION
+        ) == PackageManager.PERMISSION_GRANTED
+
+        if (!hasActivityPerm) {
+            // Try accelerometer directly
+            accelerometerSensor = accelerometerSensor ?: sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
+            accelerometerSensor?.let { sensor ->
+                sensorManager.registerListener(
+                    this,
+                    sensor,
+                    SensorManager.SENSOR_DELAY_UI
+                )
+                isRunning = true
+                currentAcceleration = SensorManager.GRAVITY_EARTH
+                lastAcceleration = SensorManager.GRAVITY_EARTH
+                Log.w(TAG, "ACTIVITY_RECOGNITION permission missing — using accelerometer fallback")
+                return
+            }
+            Log.e(TAG, "No accelerometer available for pedometer")
+            return
+        }
+
         // Try step counter first
         stepCounterSensor?.let { sensor ->
-            val registered = sensorManager.registerListener(
+            sensorManager.registerListener(
                 this,
                 sensor,
                 SensorManager.SENSOR_DELAY_UI
             )
-            if (registered) {
-                isRunning = true
-                Log.d(TAG, "Step counter sensor registered")
-                return
+            // We may get no events if sensor or permission is problematic — schedule a short fallback
+            fallbackJob?.cancel()
+            fallbackJob = CoroutineScope(Dispatchers.Default).launch {
+                delay(1500)
+                // If no step events arrived within 1.5s, switch to accelerometer
+                if (!isRunning || (stepCount == 0 && accelerometerSensor != null)) {
+                    Log.w(TAG, "No step-counter events received — switching to accelerometer fallback")
+                    withContext(Dispatchers.Main) {
+                        accelerometerSensor = accelerometerSensor ?: sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
+                        accelerometerSensor?.let { acc ->
+                            sensorManager.unregisterListener(this@AndroidStepDetector, sensor)
+                            sensorManager.registerListener(this@AndroidStepDetector, acc, SensorManager.SENSOR_DELAY_UI)
+                            isRunning = true
+                            currentAcceleration = SensorManager.GRAVITY_EARTH
+                            lastAcceleration = SensorManager.GRAVITY_EARTH
+                        }
+                    }
+                }
             }
+
+            isRunning = true
+            Log.d(TAG, "Step counter sensor registered (awaiting events)")
+            return
         }
 
         // Fall back to accelerometer
         accelerometerSensor?.let { sensor ->
-            val registered = sensorManager.registerListener(
+            sensorManager.registerListener(
                 this,
                 sensor,
                 SensorManager.SENSOR_DELAY_UI
             )
-            if (registered) {
-                isRunning = true
-                currentAcceleration = SensorManager.GRAVITY_EARTH
-                lastAcceleration = SensorManager.GRAVITY_EARTH
-                Log.d(TAG, "Accelerometer sensor registered")
-                return
-            }
+            isRunning = true
+            currentAcceleration = SensorManager.GRAVITY_EARTH
+            lastAcceleration = SensorManager.GRAVITY_EARTH
+            Log.d(TAG, "Accelerometer sensor registered")
+            return
         }
 
         Log.e(TAG, "No sensors available for step detection")
@@ -117,6 +164,8 @@ class AndroidStepDetector(
 
         sensorManager.unregisterListener(this)
         isRunning = false
+        fallbackJob?.cancel()
+        fallbackJob = null
         Log.d(TAG, "Step detector stopped")
     }
 
@@ -231,4 +280,3 @@ class AndroidStepDetector(
         // Not needed for step detection
     }
 }
-

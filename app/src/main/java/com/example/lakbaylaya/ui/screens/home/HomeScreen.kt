@@ -1,3 +1,4 @@
+@file:Suppress("DEPRECATION")
 package com.example.lakbaylaya.ui.screens.home
 
 import android.app.Application
@@ -37,8 +38,6 @@ import androidx.compose.material.icons.filled.GpsNotFixed
 import androidx.compose.material.icons.filled.WifiOff
 import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.material.icons.filled.BluetoothDisabled
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
@@ -70,14 +69,26 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.lakbaylaya.ui.screens.map.navigation.voice.NavigationVoiceManager
 import com.example.lakbaylaya.ui.screens.map.navigation.voice.VoiceCommand
+import com.example.lakbaylaya.bluetooth.BluetoothViewModel
+import com.example.lakbaylaya.voice.AppVoiceCommand
+import com.example.lakbaylaya.voice.GlobalVoiceViewModel
+import com.example.lakbaylaya.voice.WakeWordState
 
 @Composable
 fun HomeScreen(
     viewModel: HomeViewModel = viewModel(),
+    bluetoothViewModel: BluetoothViewModel = viewModel(),
+    globalVoiceViewModel: GlobalVoiceViewModel? = null,
     onNavigateToMap: () -> Unit = {},
+    onNavigateToRoutes: () -> Unit = {},
     onNavigateToSettings: () -> Unit = {}
 ) {
     val uiState by viewModel.uiState.collectAsState()
+    val btConnected by bluetoothViewModel.isBluetoothConnected.collectAsState()
+    val btDeviceName by bluetoothViewModel.connectedDeviceName.collectAsState()
+    // Observe global voice state so mic button color reflects actual engine state
+    val voiceState by (globalVoiceViewModel?.voiceState
+        ?: kotlinx.coroutines.flow.MutableStateFlow(WakeWordState.IDLE)).collectAsState()
     val context = LocalContext.current
     val application = context.applicationContext as Application
 
@@ -172,6 +183,7 @@ fun HomeScreen(
                             navigationVoiceManager.speak("Opening navigation")
                             vibrateShort()
                             viewModel.executeVoiceCommand("StartNavigation")
+                            android.util.Log.d("HomeScreen", "Voice command -> onNavigateToMap() (StartNavigation)")
                             onNavigateToMap()
                             homeVoiceRetries.value = 0
                         }
@@ -180,6 +192,7 @@ fun HomeScreen(
                             navigationVoiceManager.speak("Navigating to ${homeAction.destination}")
                             vibrateShort()
                             viewModel.executeVoiceCommand("GoTo:${homeAction.destination}")
+                            android.util.Log.d("HomeScreen", "Voice command -> onNavigateToMap() (GoTo: ${homeAction.destination})")
                             onNavigateToMap()
                             homeVoiceRetries.value = 0
                         }
@@ -212,17 +225,26 @@ fun HomeScreen(
                         }
 
                         is HomeAction.ShowCurrentLocation -> {
-                            navigationVoiceManager.speak("Showing current location on the map")
+                            // Stay on Home — speak current location status, do NOT auto-navigate
+                            viewModel.checkGpsStatus()
+                            val gps = viewModel.uiState.value.deviceStatus.gpsStatus
+                            val msg = if (gps == GpsStatus.READY) {
+                                "GPS is ready. Open the map to see your current location."
+                            } else {
+                                "GPS is not ready yet. Please wait for a fix."
+                            }
+                            navigationVoiceManager.speak(msg)
                             vibrateShort()
                             viewModel.executeVoiceCommand("ShowCurrentLocation")
-                            onNavigateToMap()
                             homeVoiceRetries.value = 0
                         }
 
                         is HomeAction.ShowFamiliarRoutes -> {
+                            // Navigate to Routes screen — NOT the map
                             navigationVoiceManager.speak("Showing your familiar routes")
                             vibrateShort()
                             viewModel.executeVoiceCommand("ShowFamiliarRoutes")
+                            onNavigateToRoutes()
                             homeVoiceRetries.value = 0
                         }
 
@@ -368,10 +390,26 @@ fun HomeScreen(
 
             // 2. Main Voice Command Button
             item {
+                val isEngineListening = voiceState == WakeWordState.COMMAND_LISTENING ||
+                    voiceState == WakeWordState.TOGGLED_LISTENING
                 VoiceCommandButton(
-                    isListening = uiState.isListening,
-                    onStartListening = { viewModel.startVoiceRecognition() },
-                    onStopListening = { viewModel.stopVoiceRecognition() }
+                    isListening = isEngineListening,
+                    onStartListening = {
+                        if (globalVoiceViewModel != null) {
+                            // Use the real voice engine — same flow as saying "listen"
+                            globalVoiceViewModel.toggleCommandListening()
+                        } else {
+                            // Fallback: legacy system recognizer path
+                            viewModel.startVoiceRecognition()
+                        }
+                    },
+                    onStopListening = {
+                        if (globalVoiceViewModel != null) {
+                            globalVoiceViewModel.toggleCommandListening()
+                        } else {
+                            viewModel.stopVoiceRecognition()
+                        }
+                    }
                 )
             }
 
@@ -381,74 +419,73 @@ fun HomeScreen(
                     isExpanded = uiState.isCommandListExpanded,
                     onToggleExpand = { viewModel.toggleCommandList() },
                     onCommandTap = { command ->
-                        // Map the displayed example command text to the same actions used by
-                        // the voice recognizer path so taps behave like spoken commands.
                         val t = command.trim().lowercase()
-
+                        vibrateShort()
                         when {
-                            t == "start navigation" || t.contains("start navigation") -> {
-                                navigationVoiceManager.speak("Opening navigation")
-                                vibrateShort()
-                                viewModel.executeVoiceCommand("StartNavigation")
-                                onNavigateToMap()
-                            }
-
-                            t.startsWith("go to") || t.startsWith("navigate to") || t.contains("go to [") -> {
-                                // Placeholder destination - open map so user can search / select destination
-                                navigationVoiceManager.speak("Open the map to choose a destination")
-                                vibrateShort()
-                                viewModel.executeVoiceCommand("GoTo:")
-                                onNavigateToMap()
-                            }
-
-                            t == "send emergency alert" || t.contains("send emergency") || t.contains(
-                                "send help"
-                            ) -> {
-                                navigationVoiceManager.speak("Sending emergency alert")
-                                vibrateShort()
-                                viewModel.executeVoiceCommand("SendEmergencyAlert")
-                            }
-
-                            t == "call emergency contact" || t.contains("call emergency") || t.contains(
-                                "call my contact"
-                            ) -> {
-                                navigationVoiceManager.speak("Calling your emergency contact")
-                                vibrateShort()
-                                viewModel.executeVoiceCommand("CallEmergencyContact")
-                            }
-
-                            t == "check device status" || t.contains("device status") -> {
+                            // ── Check device status ───────────────────────────────────────
+                            // Speaks the TTS feedback then reads the real status values
+                            t.contains("device status") || t.contains("check device") -> {
                                 viewModel.checkInternetStatus()
                                 viewModel.checkGpsStatus()
                                 viewModel.checkWearableStatus()
-                                val statusText =
-                                    buildDeviceStatusText(viewModel.uiState.value.deviceStatus)
-                                navigationVoiceManager.speak(statusText)
-                                vibrateShort()
-                                viewModel.executeVoiceCommand("CheckDeviceStatus")
+                                val statusText = buildDeviceStatusText(viewModel.uiState.value.deviceStatus)
+                                if (globalVoiceViewModel != null) {
+                                    globalVoiceViewModel.executeCommandDirectly(
+                                        AppVoiceCommand.ActionCommand.CheckDeviceStatus
+                                    )
+                                    navigationVoiceManager.speak(statusText)
+                                } else {
+                                    navigationVoiceManager.speak(statusText)
+                                    viewModel.executeVoiceCommand("CheckDeviceStatus")
+                                }
                             }
-
-                            t == "show current location" || t.contains("current location") || t.contains(
-                                "where am i"
-                            ) -> {
-                                navigationVoiceManager.speak("Showing current location on the map")
-                                vibrateShort()
-                                viewModel.executeVoiceCommand("ShowCurrentLocation")
-                                onNavigateToMap()
+                            // ── Search destination ────────────────────────────────────────
+                            // Skips the "search or saved route?" question — jumps straight into
+                            // the search branch of NavigateDialogEngine (same as saying "navigate to a place")
+                            t.contains("search destination") || t.contains("search for") || t.contains("find place") -> {
+                                if (globalVoiceViewModel != null) {
+                                    globalVoiceViewModel.startSearchDialog()
+                                } else {
+                                    navigationVoiceManager.speak("Opening map to search.")
+                                    onNavigateToMap()
+                                }
                             }
-
-                            t == "show familiar routes" || t.contains("familiar routes") || t.contains(
-                                "my routes"
-                            ) -> {
-                                navigationVoiceManager.speak("Showing your familiar routes")
-                                vibrateShort()
-                                viewModel.executeVoiceCommand("ShowFamiliarRoutes")
+                            // ── Use saved route ───────────────────────────────────────────
+                            // Jumps straight into the saved-route branch of NavigateDialogEngine
+                            // (same as saying "use saved route" after "listen")
+                            t.contains("saved route") || t.contains("use saved") -> {
+                                if (globalVoiceViewModel != null) {
+                                    globalVoiceViewModel.startSavedRouteDialog()
+                                } else {
+                                    navigationVoiceManager.speak("Showing your saved routes.")
+                                    onNavigateToRoutes()
+                                }
                             }
-
-                            else -> {
-                                // Unknown example -- just record it in the ViewModel
-                                viewModel.executeVoiceCommand(command)
+                            // ── Show routes ───────────────────────────────────────────────
+                            // Fires GoRoutes navigation command through the voice engine pipeline
+                            t.contains("show routes") || t == "routes" -> {
+                                if (globalVoiceViewModel != null) {
+                                    globalVoiceViewModel.executeCommandDirectly(
+                                        AppVoiceCommand.NavigationCommand.GoRoutes
+                                    )
+                                } else {
+                                    navigationVoiceManager.speak("Opening your saved locations.")
+                                    onNavigateToRoutes()
+                                }
                             }
+                            // ── Open map ──────────────────────────────────────────────────
+                            // Fires GoMap navigation command through the voice engine pipeline
+                            t.contains("open map") || t == "map" -> {
+                                if (globalVoiceViewModel != null) {
+                                    globalVoiceViewModel.executeCommandDirectly(
+                                        AppVoiceCommand.NavigationCommand.GoMap
+                                    )
+                                } else {
+                                    navigationVoiceManager.speak("Opening the map.")
+                                    onNavigateToMap()
+                                }
+                            }
+                            else -> viewModel.executeVoiceCommand(command)
                         }
                     }
                 )
@@ -456,7 +493,14 @@ fun HomeScreen(
 
             // 4. Device Status Panel
             item {
-                DeviceStatusPanel(deviceStatus = uiState.deviceStatus)
+                // Merge the HomeViewModel's device status with the global BluetoothViewModel connection state
+                val mergedDeviceStatus = uiState.deviceStatus.copy(
+                    wearableStatus = if (btConnected) ConnectionStatus.CONNECTED else ConnectionStatus.DISCONNECTED
+                )
+                DeviceStatusPanel(
+                    deviceStatus = mergedDeviceStatus,
+                    connectedDeviceName = if (btConnected) btDeviceName else null
+                )
             }
 
             // Bottom spacing
@@ -571,14 +615,18 @@ private fun VoiceCommandHelpList(
     onToggleExpand: () -> Unit,
     onCommandTap: (String) -> Unit
 ) {
+    // Only commands that are fully implemented and have real actions.
+    // "Start navigation" and "Go to [destination]" open the map but do not
+    // perform any persistent action on their own — they are listed here only
+    // if the voice handler actually does something beyond navigation.
+    // Emergency commands require additional hardware/permissions and are
+    // therefore NOT listed here to avoid misleading users.
     val commands = listOf(
-        "Start navigation",
-        "Go to [destination]",
-        "Send emergency alert",
-        "Call emergency contact",
-        "Check device status",
-        "Show current location",
-        "Show familiar routes"
+        "check device status",
+        "search destination",
+        "use saved route",
+        "show routes",
+        "open map"
     )
 
     // Light tinted panel to indicate guidance for speaking
@@ -719,7 +767,8 @@ private fun CommandItem(
 
 @Composable
 private fun DeviceStatusPanel(
-    deviceStatus: DeviceStatus
+    deviceStatus: DeviceStatus,
+    connectedDeviceName: String? = null
 ) {
     val statusText = buildDeviceStatusText(deviceStatus)
 
@@ -795,9 +844,14 @@ private fun DeviceStatusPanel(
 
             Spacer(modifier = Modifier.height(12.dp))
 
-            // Wearable status
+            // Wearable status — show device name when connected
+            val wearableLabel = when {
+                deviceStatus.wearableStatus == ConnectionStatus.CONNECTED && !connectedDeviceName.isNullOrBlank() ->
+                    connectedDeviceName
+                else -> "Wearable Device"
+            }
             StatusRow(
-                label = "Wearable Device",
+                label = wearableLabel,
                 status = when (deviceStatus.wearableStatus) {
                     ConnectionStatus.CONNECTED -> "Connected"
                     ConnectionStatus.DISCONNECTED -> "Not Connected"

@@ -6,22 +6,22 @@ import androidx.room.Room
 import androidx.room.RoomDatabase
 
 /**
- * Main Room database for the app including user profiles, voice notes, and landmarks.
+ * Main Room database for the app including user profiles and landmarks.
+ * Voice notes have been removed.
  */
 @Database(
     entities = [
         UserProfileEntity::class,
-        VoiceNoteEntity::class,
         LandmarkEntity::class,
-        LandmarkVoiceNoteCrossRef::class
+        NavigationStatsEntity::class
     ],
-    version = 2,
+    version = 6,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
     abstract fun userProfileDao(): UserProfileDao
-    abstract fun voiceNoteDao(): VoiceNoteDao
     abstract fun landmarkDao(): LandmarkDao
+    abstract fun navigationStatsDao(): NavigationStatsDao
 
     companion object {
         @Volatile
@@ -40,4 +40,3 @@ abstract class AppDatabase : RoomDatabase() {
             }
     }
 }
-

@@ -35,6 +35,7 @@ import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.graphics.Color
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.selection.selectable
 import com.example.lakbaylaya.ui.navigationbars.nav.NavRoutes
@@ -122,8 +123,16 @@ fun BottomNavBar(
             BottomNavItemView(
                 itemLabel = stringResource(item.labelRes),
                 item = item,
-                isSelected = currentRoute == item.id,
-                onClick = { onNavigate(item.id) },
+                // Treat Map specially: its route may include query params so compare by prefix
+                isSelected = if (item.id == NavRoutes.Map.route) {
+                    currentRoute?.startsWith(item.id) == true
+                } else {
+                    currentRoute == item.id
+                },
+                onClick = {
+                    android.util.Log.d("BottomNavBar", "clicked item=${item.id} currentRoute=$currentRoute")
+                    onNavigate(item.id)
+                },
                 modifier = Modifier.weight(1f)
             )
         }
@@ -143,9 +152,9 @@ private fun BottomNavItemView(
         animationSpec = spring()
     )
 
-    val backgroundColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = alpha)
+    val backgroundColor = Color(0xFFF0F0F0).copy(alpha = alpha)
 
-    val contentColor = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+    val contentColor = if (isSelected) Color(0xFF1A1A1A) else Color(0xFF757575)
 
     // compute content description string in composable context
     val computedContentDescription = contentDescriptionForItem(item, isSelected) ?: itemLabel

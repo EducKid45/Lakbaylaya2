@@ -16,14 +16,12 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Bluetooth
 import androidx.compose.material.icons.filled.BluetoothDisabled
-import androidx.compose.material.icons.filled.Notifications
+import androidx.compose.material.icons.filled.HelpOutline
 import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Warning
-import androidx.compose.material3.Badge
-import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -44,10 +42,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.lakbaylaya.R
-import com.example.lakbaylaya.ui.theme.Accent
 import com.example.lakbaylaya.ui.theme.BluetoothOff
 import com.example.lakbaylaya.ui.theme.BluetoothOn
-import com.example.lakbaylaya.ui.theme.DarkAccent
 import com.example.lakbaylaya.ui.theme.DarkBluetoothOff
 import com.example.lakbaylaya.ui.theme.DarkBluetoothOn
 import com.example.lakbaylaya.ui.theme.DarkEmergency
@@ -75,13 +71,12 @@ import com.example.lakbaylaya.ui.theme.Emergency
  * - Notification badge scale
  *
  * @param isBluetoothEnabled Current Bluetooth state
- * @param notificationCount Number of unread notifications
- * @param isDarkTheme Whether dark theme is active
+ * @param isDarkTheme Whether dark theme is active (accepted but ignored — app is light-only)
  * @param onSettingsClick Callback for settings action (when showing settings icon)
  * @param onBackClick Callback for back action (when showing back icon)
  * @param onEmergencyClick Callback for emergency action
  * @param onBluetoothClick Callback for bluetooth toggle
- * @param onNotificationsClick Callback for notifications action
+ * @param onHelpClick Callback for the Help (?) action — opens Voice Guide screen
  * @param showBackIcon When true, shows a back arrow instead of settings icon
  */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -89,24 +84,26 @@ import com.example.lakbaylaya.ui.theme.Emergency
 fun TopBar(
     isBluetoothEnabled: Boolean,
     bluetoothState: com.example.lakbaylaya.bluetooth.BluetoothState = com.example.lakbaylaya.bluetooth.BluetoothState.DISCONNECTED,
-    notificationCount: Int,
     isDarkTheme: Boolean,
     onSettingsClick: () -> Unit,
     onBackClick: () -> Unit,
     onEmergencyClick: () -> Unit,
     onBluetoothClick: () -> Unit,
-    onNotificationsClick: () -> Unit,
+    onHelpClick: () -> Unit,
     showBackIcon: Boolean = false,
-    showActions: Boolean = true, // NEW PARAM
-    title: String? = null // NEW PARAM
+    showActions: Boolean = true,
+    title: String? = null,
+    // Kept for binary-compatibility with call-sites that still pass these;
+    // they are intentionally ignored.
+    @Suppress("UNUSED_PARAMETER") notificationCount: Int = 0,
+    @Suppress("UNUSED_PARAMETER") onNotificationsClick: () -> Unit = {}
 ) {
     // Precompute string resources in composable scope to avoid using Context inside semantics
     val settingsDesc = stringResource(R.string.content_desc_settings)
     val emergencyDesc = stringResource(R.string.content_desc_emergency)
-    val notificationsDesc = stringResource(R.string.content_desc_notifications)
+    val helpDesc = "Open voice guide and help"
     val bluetoothOnDesc = stringResource(R.string.content_desc_bluetooth_on)
     val bluetoothOffDesc = stringResource(R.string.content_desc_bluetooth_off)
-    val badgeDesc = stringResource(R.string.content_desc_notification_badge, notificationCount)
     val backDesc = stringResource(R.string.action_back)
 
     // Emergency pulse animation
@@ -146,7 +143,6 @@ fun TopBar(
     )
 
     val emergencyColor = if (isDarkTheme) DarkEmergency else Emergency
-    val accentColor = if (isDarkTheme) DarkAccent else Accent
 
     // Wrap the TopAppBar and divider with a container that applies status bar insets
     SystemTopBarContainer {
@@ -177,7 +173,7 @@ fun TopBar(
                                 }
                         ) {
                             Icon(
-                                imageVector = Icons.Default.ArrowBack,
+                                imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                                 contentDescription = backDesc,
                                 tint = MaterialTheme.colorScheme.onSurface
                             )
@@ -270,43 +266,20 @@ fun TopBar(
                                 }
                             }
 
-                            // Notifications with badge
+                            // Help icon — opens Voice Guide screen
                             IconButton(
-                                onClick = onNotificationsClick,
+                                onClick = onHelpClick,
                                 modifier = Modifier
                                     .size(48.dp)
                                     .semantics {
-                                        contentDescription = notificationsDesc
+                                        contentDescription = helpDesc
                                     }
                             ) {
-                                BadgedBox(
-                                    badge = {
-                                        if (notificationCount > 0) {
-                                            Badge(
-                                                containerColor = accentColor,
-                                                modifier = Modifier.semantics {
-                                                    contentDescription = badgeDesc
-                                                }
-                                            ) {
-                                                Text(
-                                                    text = if (notificationCount > 99) {
-                                                        stringResource(R.string.notification_badge_over_99)
-                                                    } else {
-                                                        notificationCount.toString()
-                                                    },
-                                                    fontSize = 10.sp,
-                                                    fontWeight = FontWeight.Bold
-                                                )
-                                            }
-                                        }
-                                    }
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.Notifications,
-                                        contentDescription = stringResource(R.string.action_notifications),
-                                        tint = MaterialTheme.colorScheme.onSurface
-                                    )
-                                }
+                                Icon(
+                                    imageVector = Icons.Default.HelpOutline,
+                                    contentDescription = helpDesc,
+                                    tint = MaterialTheme.colorScheme.onSurface
+                                )
                             }
                         }
                     }

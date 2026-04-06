@@ -23,19 +23,6 @@ import com.example.lakbaylaya.utils.DirectionIconMapper
  * Navigation instruction overlay card displayed at the top of the screen
  *
  * This is the primary navigation UI element that shows the current instruction.
- * It's designed to be highly visible and readable while walking.
- *
- * Features:
- * - Large, readable instruction text
- * - Maneuver icon for visual guidance
- * - Clickable to zoom to step location and repeat instruction via TTS
- * - Material 3 design with proper elevation and colors
- * - Special arrival styling when navigation is complete
- *
- * @param step Current navigation step to display
- * @param onClick Callback when card is clicked (zoom + TTS)
- * @param modifier Modifier for customization
- * @param isArrival Whether this is showing the arrival message
  */
 @Composable
 fun NavigationInstructionCard(
@@ -44,6 +31,9 @@ fun NavigationInstructionCard(
     modifier: Modifier = Modifier,
     isArrival: Boolean = false
 ) {
+    // Prefer spokenInstruction if available for display and accessibility
+    val displayText = step.spokenInstruction.takeIf { it.isNotBlank() } ?: step.instruction
+
     // Use special styling for arrival
     val containerColor = if (isArrival) {
         MaterialTheme.colorScheme.primaryContainer
@@ -67,9 +57,9 @@ fun NavigationInstructionCard(
             )
             .semantics {
                 contentDescription = if (isArrival) {
-                    "Navigation completed: ${step.instruction}. Tap to repeat announcement."
+                    "Navigation completed: $displayText. Tap to repeat announcement."
                 } else {
-                    "Current instruction: ${step.instruction}. Tap to zoom and repeat instruction."
+                    "Current instruction: $displayText. Tap to zoom and repeat instruction."
                 }
             },
         shape = RoundedCornerShape(16.dp),
@@ -120,7 +110,7 @@ fun NavigationInstructionCard(
                 verticalArrangement = Arrangement.spacedBy(4.dp)
             ) {
                 Text(
-                    text = step.instruction,
+                    text = displayText,
                     style = MaterialTheme.typography.headlineSmall.copy(
                         fontSize = if (isArrival) 24.sp else 22.sp,
                         fontWeight = FontWeight.Bold,
@@ -155,10 +145,6 @@ fun NavigationInstructionCard(
     }
 }
 
-/**
- * Compact version of navigation instruction card for smaller screens
- * or when more map visibility is needed
- */
 @Composable
 fun CompactNavigationInstructionCard(
     step: DirectionStep,
@@ -166,6 +152,8 @@ fun CompactNavigationInstructionCard(
     modifier: Modifier = Modifier,
     isArrival: Boolean = false
 ) {
+    val displayText = step.spokenInstruction.takeIf { it.isNotBlank() } ?: step.instruction
+
     val containerColor = if (isArrival) {
         MaterialTheme.colorScheme.primaryContainer
     } else {
@@ -182,9 +170,9 @@ fun CompactNavigationInstructionCard(
             )
             .semantics {
                 contentDescription = if (isArrival) {
-                    "Navigation completed: ${step.instruction}"
+                    "Navigation completed: $displayText"
                 } else {
-                    "Current instruction: ${step.instruction}"
+                    "Current instruction: $displayText"
                 }
             },
         shape = RoundedCornerShape(12.dp),
@@ -220,7 +208,7 @@ fun CompactNavigationInstructionCard(
                 verticalArrangement = Arrangement.spacedBy(2.dp)
             ) {
                 Text(
-                    text = step.instruction,
+                    text = displayText,
                     style = MaterialTheme.typography.titleMedium.copy(
                         fontWeight = FontWeight.SemiBold
                     ),

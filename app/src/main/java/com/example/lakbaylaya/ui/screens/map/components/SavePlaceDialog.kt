@@ -8,7 +8,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 
 /**
- * Dialog for saving a place with a label
+ * Dialog for saving a place — pre-filled with the place name as default.
  */
 @Composable
 fun SavePlaceDialog(
@@ -16,7 +16,8 @@ fun SavePlaceDialog(
     onDismiss: () -> Unit,
     onConfirm: (String) -> Unit
 ) {
-    var label by remember { mutableStateOf("") }
+    // Pre-fill with the actual place name so the user can save with one tap
+    var label by remember { mutableStateOf(placeName) }
 
     Dialog(onDismissRequest = onDismiss) {
         Card(
@@ -37,7 +38,7 @@ fun SavePlaceDialog(
                 )
 
                 Text(
-                    text = "Label this place for easy access",
+                    text = "The name is pre-filled. You can edit it before saving.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -45,15 +46,9 @@ fun SavePlaceDialog(
                 OutlinedTextField(
                     value = label,
                     onValueChange = { label = it },
-                    label = { Text("Label (e.g., Home, Work, Favorite)") },
+                    label = { Text("Place Name") },
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true
-                )
-
-                Text(
-                    text = "Place: $placeName",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
 
                 Row(
@@ -79,4 +74,3 @@ fun SavePlaceDialog(
         }
     }
 }
-
